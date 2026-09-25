@@ -1,0 +1,556 @@
+{
+  "coverage": [
+    {
+      "src": "S1",
+      "country": "India",
+      "n": 17759,
+      "pct_name_indic": 0.0,
+      "pct_name_mixed": 0.0,
+      "pct_legal_form": 84.24,
+      "pct_website": 0.0,
+      "pct_alias": 0.0,
+      "pct_ocr_digit": 0.0,
+      "pct_addr_missing": 0.0,
+      "pct_state": 100.0,
+      "pct_house_number": 79.52,
+      "pct_city": 99.9,
+      "pct_street": 58.4,
+      "pct_noise_removed": 0.04
+    },
+    {
+      "src": "S1",
+      "country": "US",
+      "n": 26456,
+      "pct_name_indic": 0.0,
+      "pct_name_mixed": 0.0,
+      "pct_legal_form": 57.52,
+      "pct_website": 0.0,
+      "pct_alias": 0.0,
+      "pct_ocr_digit": 0.0,
+      "pct_addr_missing": 0.0,
+      "pct_state": 100.0,
+      "pct_house_number": 99.86,
+      "pct_city": 99.44,
+      "pct_street": 96.91,
+      "pct_noise_removed": 0.0
+    },
+    {
+      "src": "S2",
+      "country": "India",
+      "n": 40380,
+      "pct_name_indic": 23.31,
+      "pct_name_mixed": 0.91,
+      "pct_legal_form": 75.39,
+      "pct_website": 2.94,
+      "pct_alias": 0.0,
+      "pct_ocr_digit": 1.67,
+      "pct_addr_missing": 2.81,
+      "pct_state": 97.19,
+      "pct_house_number": 78.51,
+      "pct_city": 96.05,
+      "pct_street": 56.03,
+      "pct_noise_removed": 5.89
+    },
+    {
+      "src": "S2",
+      "country": "US",
+      "n": 60779,
+      "pct_name_indic": 0.0,
+      "pct_name_mixed": 0.0,
+      "pct_legal_form": 49.31,
+      "pct_website": 3.98,
+      "pct_alias": 0.0,
+      "pct_ocr_digit": 2.5,
+      "pct_addr_missing": 3.59,
+      "pct_state": 96.41,
+      "pct_house_number": 90.13,
+      "pct_city": 95.89,
+      "pct_street": 93.23,
+      "pct_noise_removed": 6.36
+    },
+    {
+      "src": "S3",
+      "country": "India",
+      "n": 42022,
+      "pct_name_indic": 13.2,
+      "pct_name_mixed": 1.67,
+      "pct_legal_form": 72.56,
+      "pct_website": 2.91,
+      "pct_alias": 2.29,
+      "pct_ocr_digit": 1.93,
+      "pct_addr_missing": 3.02,
+      "pct_state": 96.98,
+      "pct_house_number": 75.95,
+      "pct_city": 96.62,
+      "pct_street": 50.07,
+      "pct_noise_removed": 5.26
+    },
+    {
+      "src": "S3",
+      "country": "US",
+      "n": 63221,
+      "pct_name_indic": 0.0,
+      "pct_name_mixed": 0.0,
+      "pct_legal_form": 48.59,
+      "pct_website": 3.76,
+      "pct_alias": 3.51,
+      "pct_ocr_digit": 2.54,
+      "pct_addr_missing": 3.5,
+      "pct_state": 96.5,
+      "pct_house_number": 90.65,
+      "pct_city": 95.92,
+      "pct_street": 93.14,
+      "pct_noise_removed": 5.93
+    }
+  ],
+  "benchmark_single_process": [
+    {
+      "step": "normalize_name (cold cache)",
+      "n": 250617,
+      "seconds": 9.02,
+      "us_per_record": 36.0
+    },
+    {
+      "step": "normalize_name (warm cache, same records)",
+      "n": 250617,
+      "seconds": 0.06,
+      "us_per_record": 0.2
+    },
+    {
+      "step": "normalize_address (cold cache)",
+      "n": 250617,
+      "seconds": 12.73,
+      "us_per_record": 50.8
+    },
+    {
+      "step": "transliterate_text (Indic names only, cold)",
+      "n": 14957,
+      "seconds": 0.16,
+      "us_per_record": 10.9
+    },
+    {
+      "step": "extract_name_features",
+      "n": 250617,
+      "seconds": 5.09,
+      "us_per_record": 20.3
+    },
+    {
+      "step": "extract_address_features",
+      "n": 250617,
+      "seconds": 0.74,
+      "us_per_record": 2.9
+    }
+  ],
+  "benchmark_rss_growth_mb": -81,
+  "benchmark_multiprocess": {
+    "step": "name + address, 8 processes (incl. pool start-up)",
+    "n": 250617,
+    "seconds": 6.63,
+    "us_per_record": 26.4
+  },
+  "benchmark_extrapolation": [
+    {
+      "setting": "single process, cold cache (measured rate)",
+      "us_per_record": 86.8,
+      "est_minutes_all_12.5M": 18.1
+    },
+    {
+      "setting": "8 processes (measured rate)",
+      "us_per_record": 26.4,
+      "est_minutes_all_12.5M": 5.5
+    }
+  ],
+  "true_pair_diagnostics": [
+    {
+      "metric": "name_raw_eq",
+      "true: all": 4.71,
+      "true: S2": 4.97,
+      "true: S3": 4.46,
+      "true: US": 6.08,
+      "true: India": 2.66,
+      "control: random pairs": 0.0,
+      "lift (true all - control)": 4.71
+    },
+    {
+      "metric": "name_basic_eq",
+      "true: all": 17.52,
+      "true: S2": 17.83,
+      "true: S3": 17.23,
+      "true: US": 21.33,
+      "true: India": 11.84,
+      "control: random pairs": 0.0,
+      "lift (true all - control)": 17.52
+    },
+    {
+      "metric": "name_punct_eq",
+      "true: all": 26.68,
+      "true: S2": 26.29,
+      "true: S3": 27.06,
+      "true: US": 31.98,
+      "true: India": 18.79,
+      "control: random pairs": 0.0,
+      "lift (true all - control)": 26.68
+    },
+    {
+      "metric": "name_core_eq",
+      "true: all": 52.15,
+      "true: S2": 53.08,
+      "true: S3": 51.27,
+      "true: US": 56.7,
+      "true: India": 45.36,
+      "control: random pairs": 0.01,
+      "lift (true all - control)": 52.14
+    },
+    {
+      "metric": "name_core_latin_eq",
+      "true: all": 52.31,
+      "true: S2": 53.25,
+      "true: S3": 51.42,
+      "true: US": 56.7,
+      "true: India": 45.76,
+      "control: random pairs": 0.01,
+      "lift (true all - control)": 52.3
+    },
+    {
+      "metric": "name_variant_eq",
+      "true: all": 58.3,
+      "true: S2": 57.12,
+      "true: S3": 59.41,
+      "true: US": 63.18,
+      "true: India": 51.03,
+      "control: random pairs": 0.01,
+      "lift (true all - control)": 58.29
+    },
+    {
+      "metric": "name_legal_form_eq",
+      "true: all": 71.38,
+      "true: S2": 70.71,
+      "true: S3": 72.01,
+      "true: US": 72.75,
+      "true: India": 69.35,
+      "control: random pairs": 32.3,
+      "lift (true all - control)": 39.08
+    },
+    {
+      "metric": "name_shared_raw_token",
+      "true: all": 85.83,
+      "true: S2": 84.05,
+      "true: S3": 87.51,
+      "true: US": 91.99,
+      "true: India": 76.65,
+      "control: random pairs": 15.65,
+      "lift (true all - control)": 70.18
+    },
+    {
+      "metric": "name_shared_core_token",
+      "true: all": 87.96,
+      "true: S2": 86.97,
+      "true: S3": 88.9,
+      "true: US": 91.82,
+      "true: India": 82.21,
+      "control: random pairs": 1.53,
+      "lift (true all - control)": 86.43
+    },
+    {
+      "metric": "addr_basic_eq",
+      "true: all": 7.42,
+      "true: S2": 10.72,
+      "true: S3": 4.31,
+      "true: US": 7.99,
+      "true: India": 6.58,
+      "control: random pairs": 0.0,
+      "lift (true all - control)": 7.42
+    },
+    {
+      "metric": "addr_normalized_eq",
+      "true: all": 25.91,
+      "true: S2": 23.93,
+      "true: S3": 27.77,
+      "true: US": 31.63,
+      "true: India": 17.38,
+      "control: random pairs": 0.0,
+      "lift (true all - control)": 25.91
+    },
+    {
+      "metric": "addr_shared_component",
+      "true: all": 95.45,
+      "true: S2": 95.31,
+      "true: S3": 95.58,
+      "true: US": 95.09,
+      "true: India": 95.98,
+      "control: random pairs": 6.56,
+      "lift (true all - control)": 88.89
+    },
+    {
+      "metric": "addr_house_number_core_agree",
+      "true: all": 86.78,
+      "true: S2": 86.21,
+      "true: S3": 87.32,
+      "true: US": 89.46,
+      "true: India": 81.98,
+      "control: random pairs": 0.49,
+      "lift (true all - control)": 86.29
+    },
+    {
+      "metric": "addr_house_number_agree",
+      "true: all": 80.78,
+      "true: S2": 80.27,
+      "true: S3": 81.27,
+      "true: US": 83.01,
+      "true: India": 76.79,
+      "control: random pairs": 0.15,
+      "lift (true all - control)": 80.63
+    },
+    {
+      "metric": "addr_state_agree",
+      "true: all": 99.38,
+      "true: S2": 99.38,
+      "true: S3": 99.38,
+      "true: US": 99.86,
+      "true: India": 98.67,
+      "control: random pairs": 6.79,
+      "lift (true all - control)": 92.59
+    },
+    {
+      "metric": "addr_city_agree",
+      "true: all": 74.86,
+      "true: S2": 71.26,
+      "true: S3": 78.24,
+      "true: US": 82.69,
+      "true: India": 63.29,
+      "control: random pairs": 0.8,
+      "lift (true all - control)": 74.06
+    },
+    {
+      "metric": "addr_shared_place",
+      "true: all": 89.27,
+      "true: S2": 88.98,
+      "true: S3": 89.54,
+      "true: US": 82.75,
+      "true: India": 98.91,
+      "control: random pairs": 1.26,
+      "lift (true all - control)": 88.01
+    },
+    {
+      "metric": "addr_street_agree",
+      "true: all": 90.35,
+      "true: S2": 90.54,
+      "true: S3": 90.17,
+      "true: US": 91.17,
+      "true: India": 88.0,
+      "control: random pairs": 0.02,
+      "lift (true all - control)": 90.33
+    },
+    {
+      "metric": "addr_shared_number",
+      "true: all": 94.46,
+      "true: S2": 93.95,
+      "true: S3": 94.94,
+      "true: US": 92.62,
+      "true: India": 97.23,
+      "control: random pairs": 3.87,
+      "lift (true all - control)": 90.59
+    },
+    {
+      "metric": "name_tset_raw (mean)",
+      "true: all": 84.8,
+      "true: S2": 83.2,
+      "true: S3": 86.3,
+      "true: US": 90.9,
+      "true: India": 75.7,
+      "control: random pairs": 32.5,
+      "lift (true all - control)": 52.3
+    },
+    {
+      "metric": "name_tset_basic (mean)",
+      "true: all": 85.0,
+      "true: S2": 83.4,
+      "true: S3": 86.4,
+      "true: US": 91.1,
+      "true: India": 75.8,
+      "control: random pairs": 32.7,
+      "lift (true all - control)": 52.3
+    },
+    {
+      "metric": "name_tset_core_latin (mean)",
+      "true: all": 91.9,
+      "true: S2": 91.6,
+      "true: S3": 92.1,
+      "true: US": 93.9,
+      "true: India": 88.8,
+      "control: random pairs": 30.8,
+      "lift (true all - control)": 61.1
+    },
+    {
+      "metric": "name_phonetic_ratio (mean)",
+      "true: all": 93.9,
+      "true: S2": 94.2,
+      "true: S3": 93.7,
+      "true: US": 94.3,
+      "true: India": 93.4,
+      "control: random pairs": 39.2,
+      "lift (true all - control)": 54.7
+    },
+    {
+      "metric": "addr_tset_raw (mean)",
+      "true: all": 89.0,
+      "true: S2": 91.9,
+      "true: S3": 86.3,
+      "true: US": 88.2,
+      "true: India": 90.2,
+      "control: random pairs": 36.2,
+      "lift (true all - control)": 52.8
+    },
+    {
+      "metric": "addr_tset_normalized (mean)",
+      "true: all": 95.1,
+      "true: S2": 95.2,
+      "true: S3": 95.0,
+      "true: US": 95.0,
+      "true: India": 95.3,
+      "control: random pairs": 36.5,
+      "lift (true all - control)": 58.6
+    },
+    {
+      "metric": "addr_component_jaccard (mean)",
+      "true: all": 0.7,
+      "true: S2": 0.7,
+      "true: S3": 0.7,
+      "true: US": 0.7,
+      "true: India": 0.7,
+      "control: random pairs": 0.0,
+      "lift (true all - control)": 0.7
+    },
+    {
+      "metric": "addr_token_jaccard (mean)",
+      "true: all": 0.8,
+      "true: S2": 0.8,
+      "true: S3": 0.8,
+      "true: US": 0.8,
+      "true: India": 0.8,
+      "control: random pairs": 0.0,
+      "lift (true all - control)": 0.8
+    },
+    {
+      "metric": "n",
+      "true: all": 50934.0,
+      "true: S2": 24706.0,
+      "true: S3": 26228.0,
+      "true: US": 30480.0,
+      "true: India": 20454.0,
+      "control: random pairs": 50934.0,
+      "lift (true all - control)": 0.0
+    }
+  ],
+  "script_mismatch_subset": {
+    "table": [
+      {
+        "metric": "name_shared_raw_token",
+        "true (script mismatch)": 7.96,
+        "control (script mismatch)": 2.09
+      },
+      {
+        "metric": "name_shared_core_token",
+        "true (script mismatch)": 40.04,
+        "control (script mismatch)": 0.36
+      },
+      {
+        "metric": "name_core_latin_eq",
+        "true (script mismatch)": 3.33,
+        "control (script mismatch)": 0.0
+      },
+      {
+        "metric": "name_legal_form_eq",
+        "true (script mismatch)": 100.0,
+        "control (script mismatch)": 50.1
+      },
+      {
+        "metric": "name_tset_raw (mean)",
+        "true (script mismatch)": 14.1,
+        "control (script mismatch)": 10.3
+      },
+      {
+        "metric": "name_tset_basic (mean)",
+        "true (script mismatch)": 14.2,
+        "control (script mismatch)": 10.3
+      },
+      {
+        "metric": "name_tset_core_latin (mean)",
+        "true (script mismatch)": 70.5,
+        "control (script mismatch)": 30.7
+      },
+      {
+        "metric": "name_phonetic_ratio (mean)",
+        "true (script mismatch)": 94.3,
+        "control (script mismatch)": 39.5
+      },
+      {
+        "metric": "n",
+        "true (script mismatch)": 3629.0,
+        "control (script mismatch)": 3629.0
+      }
+    ],
+    "thresholds": [
+      {
+        "set": "true",
+        "tset_raw >= 80": 2.31,
+        "tset_core_latin >= 80": 30.37,
+        "phonetic >= 80": 97.8
+      },
+      {
+        "set": "control",
+        "tset_raw >= 80": 0.0,
+        "tset_core_latin >= 80": 0.11,
+        "phonetic >= 80": 0.36
+      }
+    ]
+  },
+  "key_agreement_union": [
+    {
+      "condition (OR)": "K1",
+      "true pairs %": 58.3,
+      "random pairs %": 0.01
+    },
+    {
+      "condition (OR)": "K2",
+      "true pairs %": 69.8,
+      "random pairs %": 0.05
+    },
+    {
+      "condition (OR)": "K1 | K2",
+      "true pairs %": 86.68,
+      "random pairs %": 0.05
+    },
+    {
+      "condition (OR)": "K1 | K2 | K5",
+      "true pairs %": 92.4,
+      "random pairs %": 0.16
+    },
+    {
+      "condition (OR)": "K1 | K2 | K4",
+      "true pairs %": 97.56,
+      "random pairs %": 0.25
+    },
+    {
+      "condition (OR)": "K1 | K2 | K4 | K5",
+      "true pairs %": 98.64,
+      "random pairs %": 0.36
+    },
+    {
+      "condition (OR)": "K3",
+      "true pairs %": 87.96,
+      "random pairs %": 1.53
+    },
+    {
+      "condition (OR)": "K3 | K2",
+      "true pairs %": 96.11,
+      "random pairs %": 1.57
+    }
+  ],
+  "runtime_total_sec": 83.5,
+  "sample_sizes": {
+    "records": 250617,
+    "true_pairs": 50934,
+    "control_pairs": 50934
+  }
+}
