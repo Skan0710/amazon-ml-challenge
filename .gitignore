@@ -1,0 +1,60 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Large competition dataset files (do NOT commit)
+data/raw/*.tsv
+data/raw/*.csv
+data/processed/*.tsv
+data/processed/*.csv
+data/processed/*.parquet
+data/processed/*.duckdb
+data/processed/*.duckdb.wal
+data/processed/duckdb_tmp/
+# ...and anywhere else in the repo (training/test TSVs, CSVs, DuckDB files)
+*.tsv
+*.csv
+*.duckdb
+*.duckdb.wal
+
+# Model artifacts (large)
+models/*.pkl
+models/*.joblib
+models/*.bin
+
+# Output files (generated)
+output/*.tsv
+output/*.csv
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files
+.env
+*.env
+
+# Logs
+*.log
+logs/
+
+# Experiment artifacts
+experiments/**/*.pkl
+experiments/**/*.joblib
