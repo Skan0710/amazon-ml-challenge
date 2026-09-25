@@ -22,10 +22,13 @@ data/raw/*.tsv
 data/raw/*.csv
 data/processed/*.tsv
 data/processed/*.csv
-data/processed/*.parquet
+data/processed/
+# Phase 3 generated artefacts (normalised records, candidate DB, spill) - never commit
+*.parquet
 data/processed/*.duckdb
 data/processed/*.duckdb.wal
 data/processed/duckdb_tmp/
+.venv/
 # ...and anywhere else in the repo (training/test TSVs, CSVs, DuckDB files)
 *.tsv
 *.csv
