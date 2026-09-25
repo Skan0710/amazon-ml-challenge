@@ -1,0 +1,13 @@
+# Methodology Write-up
+
+## Methodology used
+Describe the methodology...
+
+## Candidate generation/blocking strategy
+Describe the blocking strategy...
+
+## Model architecture and feature engineering
+Describe the model and features...
+
+## Any other relevant information
+Additional details...
