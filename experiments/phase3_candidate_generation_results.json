@@ -1,0 +1,879 @@
+{
+  "notebook_started": "2026-09-26 11:13:53",
+  "environment": {
+    "ram_total_gb": 8.6,
+    "ram_available_gb_at_start": 1.7,
+    "free_disk_gb_at_start": 6.5,
+    "cpus": 8,
+    "duckdb": "1.5.5"
+  },
+  "materialisation": {
+    "s1": {
+      "rows": 2206821,
+      "parts": 23,
+      "seconds": 76.7,
+      "bytes": 163187963
+    },
+    "s2": {
+      "rows": 5034616,
+      "parts": 51,
+      "seconds": 201.8,
+      "bytes": 384414225
+    },
+    "s3": {
+      "rows": 5285603,
+      "parts": 53,
+      "seconds": 211.4,
+      "bytes": 401591475
+    },
+    "peak_rss_gb": 1.03,
+    "parquet_mb": {
+      "s1": 163.2,
+      "s2": 384.4,
+      "s3": 401.6
+    }
+  },
+  "statistics_tables_rows": {
+    "st_hn": 490646,
+    "st_hn_refined": 4727469,
+    "st_name": 5320348,
+    "st_name_state": 84106,
+    "st_ngram": 1048593,
+    "st_phonetic": 4237433,
+    "st_phonetic_state": 255346,
+    "st_rare_addr": 993848,
+    "st_rare_name": 2591062,
+    "st_rare_phon": 1297749
+  },
+  "statistics_build_seconds": {},
+  "pilot_initial": {
+    "config": {
+      "name_cap": 100,
+      "name_state_cap": 100,
+      "phon_cap": 50,
+      "phon_state_cap": 50,
+      "hn_cap": 50,
+      "hn_refined_cap": 50,
+      "token_k": 2,
+      "token_df_cap": 50,
+      "addr_token_df_cap": 50,
+      "ngram_n": 3,
+      "ngram_m": 6,
+      "ngram_df_cap": 300,
+      "ngram_min_shared": 3,
+      "ngram_top_k": 20,
+      "compound_cap": 30,
+      "stateless_fallback": false,
+      "per_s1_cap": null
+    },
+    "n_s1": 9929,
+    "true_pairs": 34587,
+    "table": [
+      {
+        "strategy": "name",
+        "recall_%": 57.41,
+        "candidates": 151719,
+        "avg/S1": 15.28,
+        "p95/S1": 77.0,
+        "max/S1": 100,
+        "precision_%": 13.09,
+        "seconds": 0.84
+      },
+      {
+        "strategy": "phonetic",
+        "recall_%": 57.31,
+        "candidates": 89162,
+        "avg/S1": 8.98,
+        "p95/S1": 33.0,
+        "max/S1": 50,
+        "precision_%": 22.23,
+        "seconds": 0.53
+      },
+      {
+        "strategy": "structured",
+        "recall_%": 66.4,
+        "candidates": 122993,
+        "avg/S1": 12.39,
+        "p95/S1": 42.0,
+        "max/S1": 92,
+        "precision_%": 18.67,
+        "seconds": 0.96
+      },
+      {
+        "strategy": "rare_name",
+        "recall_%": 41.91,
+        "candidates": 94198,
+        "avg/S1": 9.49,
+        "p95/S1": 43.0,
+        "max/S1": 95,
+        "precision_%": 15.39,
+        "seconds": 0.47
+      },
+      {
+        "strategy": "rare_phon",
+        "recall_%": 19.58,
+        "candidates": 59124,
+        "avg/S1": 5.95,
+        "p95/S1": 40.0,
+        "max/S1": 93,
+        "precision_%": 11.45,
+        "seconds": 0.36
+      },
+      {
+        "strategy": "rare_addr",
+        "recall_%": 41.17,
+        "candidates": 92293,
+        "avg/S1": 9.3,
+        "p95/S1": 42.0,
+        "max/S1": 92,
+        "precision_%": 15.43,
+        "seconds": 0.53
+      },
+      {
+        "strategy": "ngram",
+        "recall_%": 24.61,
+        "candidates": 25042,
+        "avg/S1": 2.52,
+        "p95/S1": 20.0,
+        "max/S1": 20,
+        "precision_%": 33.99,
+        "seconds": 9.37
+      },
+      {
+        "strategy": "UNION",
+        "recall_%": 93.81,
+        "candidates": 480502,
+        "avg/S1": 48.39,
+        "p95/S1": 111.0,
+        "max/S1": 250,
+        "precision_%": 6.75,
+        "seconds": 13.1
+      }
+    ],
+    "union": {
+      "true_pairs": 34587,
+      "recovered": 32447,
+      "recall": 0.9381,
+      "recall_s2": 0.9401,
+      "recall_s3": 0.9363,
+      "recall_by_country": {
+        "india": {
+          "true_pairs": 13979,
+          "recall": 0.9026
+        },
+        "us": {
+          "true_pairs": 20608,
+          "recall": 0.9622
+        }
+      },
+      "candidates": 480502,
+      "avg_per_s1": 48.39,
+      "median_per_s1": 42.0,
+      "p95_per_s1": 111.0,
+      "p99_per_s1": 142.0,
+      "max_per_s1": 250,
+      "pct_s1_without_candidates": 0.11,
+      "s1_records": 9929,
+      "pair_precision": 0.0675
+    },
+    "peak_rss_gb": 1.25
+  },
+  "pilot_initial_failure_analysis": {
+    "missed_pairs": 2140.0,
+    "pct_india": 63.6,
+    "pct_target_without_state": 28.7,
+    "pct_state_differs": 5.1,
+    "pct_same_state_hn": 15.4,
+    "pct_share_phonetic_token": 85.7,
+    "pct_share_name_token": 74.1,
+    "pct_share_addr_token": 69.7,
+    "same_state_hn_block_p10_p50_p90": [
+      144.0,
+      2801.0,
+      16497.0
+    ]
+  },
+  "sweep": {
+    "base": {
+      "recall": 0.9484,
+      "avg_per_s1": 60.1
+    },
+    "variants": [
+      {
+        "strategy": "rare_name",
+        "change": {
+          "token_k": 3
+        },
+        "status": "ok",
+        "union_recall_%": 94.84,
+        "gain_pts": 0.0,
+        "extra_cands_per_s1": 0.4,
+        "seconds": 0.5,
+        "gain_per_10_cands": 0.0
+      },
+      {
+        "strategy": "rare_name",
+        "change": {
+          "token_df_cap": 100
+        },
+        "status": "ok",
+        "union_recall_%": 95.22,
+        "gain_pts": 0.38,
+        "extra_cands_per_s1": 29.0,
+        "seconds": 0.5,
+        "gain_per_10_cands": 0.131
+      },
+      {
+        "strategy": "rare_phon",
+        "change": {
+          "token_k": 3
+        },
+        "status": "ok",
+        "union_recall_%": 94.84,
+        "gain_pts": 0.0,
+        "extra_cands_per_s1": 0.1,
+        "seconds": 0.5,
+        "gain_per_10_cands": 0.0
+      },
+      {
+        "strategy": "rare_addr",
+        "change": {
+          "token_k": 3
+        },
+        "status": "ok",
+        "union_recall_%": 94.85,
+        "gain_pts": 0.01,
+        "extra_cands_per_s1": 0.6,
+        "seconds": 0.8,
+        "gain_per_10_cands": 0.167
+      },
+      {
+        "strategy": "rare_addr",
+        "change": {
+          "addr_token_df_cap": 100
+        },
+        "status": "ok",
+        "union_recall_%": 95.36,
+        "gain_pts": 0.52,
+        "extra_cands_per_s1": 11.4,
+        "seconds": 0.6,
+        "gain_per_10_cands": 0.456
+      },
+      {
+        "strategy": "structured",
+        "change": {
+          "hn_cap": 100,
+          "hn_refined_cap": 100
+        },
+        "status": "ok",
+        "union_recall_%": 95.04,
+        "gain_pts": 0.2,
+        "extra_cands_per_s1": 10.2,
+        "seconds": 1.0,
+        "gain_per_10_cands": 0.196
+      },
+      {
+        "strategy": "structured",
+        "change": {
+          "hn_cap": 200,
+          "hn_refined_cap": 200
+        },
+        "status": "ok",
+        "union_recall_%": 95.22,
+        "gain_pts": 0.38,
+        "extra_cands_per_s1": 29.5,
+        "seconds": 1.0,
+        "gain_per_10_cands": 0.129
+      },
+      {
+        "strategy": "name",
+        "change": {
+          "name_cap": 300,
+          "name_state_cap": 300
+        },
+        "status": "ok",
+        "union_recall_%": 94.89,
+        "gain_pts": 0.04,
+        "extra_cands_per_s1": 9.3,
+        "seconds": 0.6,
+        "gain_per_10_cands": 0.043
+      },
+      {
+        "strategy": "phonetic",
+        "change": {
+          "phon_cap": 150,
+          "phon_state_cap": 150
+        },
+        "status": "ok",
+        "union_recall_%": 95.06,
+        "gain_pts": 0.22,
+        "extra_cands_per_s1": 7.2,
+        "seconds": 0.6,
+        "gain_per_10_cands": 0.306
+      },
+      {
+        "strategy": "ngram",
+        "change": {
+          "ngram_min_shared": 2
+        },
+        "status": "ok",
+        "union_recall_%": 95.06,
+        "gain_pts": 0.22,
+        "extra_cands_per_s1": 5.5,
+        "seconds": 10.1,
+        "gain_per_10_cands": 0.4
+      },
+      {
+        "strategy": "ngram",
+        "change": {
+          "ngram_top_k": 50
+        },
+        "status": "ok",
+        "union_recall_%": 94.86,
+        "gain_pts": 0.02,
+        "extra_cands_per_s1": 1.4,
+        "seconds": 10.7,
+        "gain_per_10_cands": 0.143
+      },
+      {
+        "strategy": "ngram",
+        "change": {
+          "ngram_m": 8,
+          "ngram_df_cap": 1000
+        },
+        "status": "ok",
+        "union_recall_%": 95.37,
+        "gain_pts": 0.52,
+        "extra_cands_per_s1": 8.1,
+        "seconds": 10.9,
+        "gain_per_10_cands": 0.642
+      },
+      {
+        "strategy": "compound",
+        "change": {
+          "compound_cap": 30
+        },
+        "status": "ok",
+        "union_recall_%": 96.69,
+        "gain_pts": 1.84,
+        "extra_cands_per_s1": 12.2,
+        "seconds": 4.5,
+        "gain_per_10_cands": 1.508
+      },
+      {
+        "strategy": "compound",
+        "change": {
+          "compound_cap": 60
+        },
+        "status": "ok",
+        "union_recall_%": 96.94,
+        "gain_pts": 2.09,
+        "extra_cands_per_s1": 24.3,
+        "seconds": 4.6,
+        "gain_per_10_cands": 0.86
+      }
+    ]
+  },
+  "pilot_final": {
+    "config": {
+      "name_cap": 100,
+      "name_state_cap": 100,
+      "phon_cap": 150,
+      "phon_state_cap": 150,
+      "hn_cap": 100,
+      "hn_refined_cap": 100,
+      "token_k": 2,
+      "token_df_cap": 50,
+      "addr_token_df_cap": 100,
+      "ngram_n": 3,
+      "ngram_m": 8,
+      "ngram_df_cap": 1000,
+      "ngram_min_shared": 3,
+      "ngram_top_k": 20,
+      "compound_cap": 30,
+      "stateless_fallback": true,
+      "per_s1_cap": 200
+    },
+    "table": [
+      {
+        "strategy": "compound",
+        "recall_%": 79.42,
+        "candidates": 165007,
+        "avg/S1": 16.62,
+        "p95/S1": 44.0,
+        "max/S1": 112,
+        "precision_%": 16.65,
+        "seconds": 4.93,
+        "recall_lost_if_removed_pts": 1.18
+      },
+      {
+        "strategy": "ngram",
+        "recall_%": 50.08,
+        "candidates": 138617,
+        "avg/S1": 13.96,
+        "p95/S1": 20.0,
+        "max/S1": 20,
+        "precision_%": 12.49,
+        "seconds": 11.7,
+        "recall_lost_if_removed_pts": 0.37
+      },
+      {
+        "strategy": "name",
+        "recall_%": 57.61,
+        "candidates": 159882,
+        "avg/S1": 16.1,
+        "p95/S1": 78.0,
+        "max/S1": 119,
+        "precision_%": 12.46,
+        "seconds": 0.68,
+        "recall_lost_if_removed_pts": 0.31
+      },
+      {
+        "strategy": "rare_addr",
+        "recall_%": 51.46,
+        "candidates": 211441,
+        "avg/S1": 21.3,
+        "p95/S1": 88.0,
+        "max/S1": 189,
+        "precision_%": 8.42,
+        "seconds": 0.68,
+        "recall_lost_if_removed_pts": 1.16
+      },
+      {
+        "strategy": "structured",
+        "recall_%": 67.16,
+        "candidates": 224437,
+        "avg/S1": 22.6,
+        "p95/S1": 83.0,
+        "max/S1": 163,
+        "precision_%": 10.35,
+        "seconds": 1.2,
+        "recall_lost_if_removed_pts": 1.42
+      },
+      {
+        "strategy": "phonetic",
+        "recall_%": 60.01,
+        "candidates": 223758,
+        "avg/S1": 22.54,
+        "p95/S1": 104.0,
+        "max/S1": 269,
+        "precision_%": 9.28,
+        "seconds": 0.63,
+        "recall_lost_if_removed_pts": 0.59
+      },
+      {
+        "strategy": "rare_name",
+        "recall_%": 44.43,
+        "candidates": 159656,
+        "avg/S1": 16.08,
+        "p95/S1": 61.0,
+        "max/S1": 148,
+        "precision_%": 9.63,
+        "seconds": 0.54,
+        "recall_lost_if_removed_pts": 0.26
+      },
+      {
+        "strategy": "rare_phon",
+        "recall_%": 20.83,
+        "candidates": 108051,
+        "avg/S1": 10.88,
+        "p95/S1": 56.0,
+        "max/S1": 146,
+        "precision_%": 6.67,
+        "seconds": 0.46,
+        "recall_lost_if_removed_pts": 0.0
+      },
+      {
+        "strategy": "UNION",
+        "recall_%": 97.33,
+        "candidates": 1075700,
+        "avg/S1": 108.34,
+        "p95/S1": 216.0,
+        "max/S1": 425,
+        "precision_%": 3.13,
+        "seconds": 20.8,
+        "recall_lost_if_removed_pts": null
+      }
+    ],
+    "union_all_evaluated": {
+      "true_pairs": 34587,
+      "recovered": 33664,
+      "recall": 0.9733,
+      "recall_s2": 0.9755,
+      "recall_s3": 0.9713,
+      "recall_by_country": {
+        "india": {
+          "true_pairs": 13979,
+          "recall": 0.9539
+        },
+        "us": {
+          "true_pairs": 20608,
+          "recall": 0.9865
+        }
+      },
+      "candidates": 1075700,
+      "avg_per_s1": 108.34,
+      "median_per_s1": 99.0,
+      "p95_per_s1": 216.0,
+      "p99_per_s1": 270.72,
+      "max_per_s1": 425,
+      "pct_s1_without_candidates": 0.0,
+      "s1_records": 9929,
+      "pair_precision": 0.0313
+    },
+    "greedy": [
+      {
+        "add": "compound",
+        "cumulative_recall_%": 79.42,
+        "avg_cands_per_s1": 16.6
+      },
+      {
+        "add": "ngram",
+        "cumulative_recall_%": 87.58,
+        "avg_cands_per_s1": 28.6
+      },
+      {
+        "add": "name",
+        "cumulative_recall_%": 91.49,
+        "avg_cands_per_s1": 41.9
+      },
+      {
+        "add": "rare_addr",
+        "cumulative_recall_%": 94.82,
+        "avg_cands_per_s1": 60.9
+      },
+      {
+        "add": "structured",
+        "cumulative_recall_%": 96.34,
+        "avg_cands_per_s1": 80.3
+      },
+      {
+        "add": "phonetic",
+        "cumulative_recall_%": 96.99,
+        "avg_cands_per_s1": 92.2
+      },
+      {
+        "add": "rare_name",
+        "cumulative_recall_%": 97.33,
+        "avg_cands_per_s1": 103.8
+      },
+      {
+        "add": "rare_phon",
+        "cumulative_recall_%": 97.33,
+        "avg_cands_per_s1": 108.3
+      }
+    ],
+    "per_s1_cap": [
+      {
+        "per_s1_cap": "none",
+        "recall_%": 97.33,
+        "avg/S1": 103.8,
+        "p95/S1": 213.0,
+        "max/S1": 425,
+        "recall_india_%": 95.39,
+        "recall_us_%": 98.65
+      },
+      {
+        "per_s1_cap": 300,
+        "recall_%": 97.33,
+        "avg/S1": 103.68,
+        "p95/S1": 213.0,
+        "max/S1": 300,
+        "recall_india_%": 95.38,
+        "recall_us_%": 98.65
+      },
+      {
+        "per_s1_cap": 200,
+        "recall_%": 97.23,
+        "avg/S1": 101.31,
+        "p95/S1": 200.0,
+        "max/S1": 200,
+        "recall_india_%": 95.17,
+        "recall_us_%": 98.62
+      },
+      {
+        "per_s1_cap": 150,
+        "recall_%": 96.98,
+        "avg/S1": 95.19,
+        "p95/S1": 150.0,
+        "max/S1": 150,
+        "recall_india_%": 94.68,
+        "recall_us_%": 98.54
+      },
+      {
+        "per_s1_cap": 100,
+        "recall_%": 96.07,
+        "avg/S1": 79.26,
+        "p95/S1": 100.0,
+        "max/S1": 100,
+        "recall_india_%": 92.82,
+        "recall_us_%": 98.27
+      }
+    ],
+    "peak_rss_gb": 1.32
+  },
+  "pilot_final_failure_analysis": {
+    "n": 923.0,
+    "pct_india": 69.9,
+    "pct_target_without_state": 21.3,
+    "pct_state_differs": 11.7,
+    "pct_no_shared_name_or_phon_token": 21.8
+  },
+  "validation_100k": {
+    "n_s1": 99514,
+    "true_pairs": 344494,
+    "run": {
+      "seconds": 259.4,
+      "chunks": [
+        {
+          "chunk": 0,
+          "pairs": 1015515,
+          "seconds": 21.7
+        },
+        {
+          "chunk": 1,
+          "pairs": 1060149,
+          "seconds": 21.5
+        },
+        {
+          "chunk": 2,
+          "pairs": 1018606,
+          "seconds": 22.4
+        },
+        {
+          "chunk": 3,
+          "pairs": 1035088,
+          "seconds": 27.1
+        },
+        {
+          "chunk": 4,
+          "pairs": 1025484,
+          "seconds": 28.8
+        },
+        {
+          "chunk": 5,
+          "pairs": 1033408,
+          "seconds": 28.2
+        },
+        {
+          "chunk": 6,
+          "pairs": 1035391,
+          "seconds": 27.0
+        },
+        {
+          "chunk": 7,
+          "pairs": 1023299,
+          "seconds": 25.9
+        },
+        {
+          "chunk": 8,
+          "pairs": 1032414,
+          "seconds": 27.5
+        },
+        {
+          "chunk": 9,
+          "pairs": 1032293,
+          "seconds": 28.9
+        }
+      ],
+      "per_strategy": {
+        "compound": {
+          "seconds": 59.4,
+          "pairs": 1653446,
+          "stopped_chunks": 0
+        },
+        "ngram": {
+          "seconds": 153.9,
+          "pairs": 1383038,
+          "stopped_chunks": 0
+        },
+        "name": {
+          "seconds": 8.5,
+          "pairs": 1615635,
+          "stopped_chunks": 0
+        },
+        "rare_addr": {
+          "seconds": 8.5,
+          "pairs": 2116453,
+          "stopped_chunks": 0
+        },
+        "structured": {
+          "seconds": 13.1,
+          "pairs": 2228998,
+          "stopped_chunks": 0
+        },
+        "phonetic": {
+          "seconds": 6.6,
+          "pairs": 2273096,
+          "stopped_chunks": 0
+        },
+        "rare_name": {
+          "seconds": 6.7,
+          "pairs": 1586154,
+          "stopped_chunks": 0
+        }
+      }
+    },
+    "table": [
+      {
+        "strategy": "compound",
+        "recall_%": 79.56,
+        "candidates": 1653446,
+        "avg/S1": 16.62,
+        "p95/S1": 44.0,
+        "max/S1": 135,
+        "precision_%": 16.58,
+        "seconds": 59.4,
+        "recall_lost_if_removed_pts": 1.2
+      },
+      {
+        "strategy": "ngram",
+        "recall_%": 49.94,
+        "candidates": 1383038,
+        "avg/S1": 13.9,
+        "p95/S1": 20.0,
+        "max/S1": 20,
+        "precision_%": 12.44,
+        "seconds": 153.9,
+        "recall_lost_if_removed_pts": 0.4
+      },
+      {
+        "strategy": "name",
+        "recall_%": 57.86,
+        "candidates": 1615635,
+        "avg/S1": 16.24,
+        "p95/S1": 78.0,
+        "max/S1": 119,
+        "precision_%": 12.34,
+        "seconds": 8.5,
+        "recall_lost_if_removed_pts": 0.31
+      },
+      {
+        "strategy": "rare_addr",
+        "recall_%": 51.26,
+        "candidates": 2116453,
+        "avg/S1": 21.27,
+        "p95/S1": 88.0,
+        "max/S1": 194,
+        "precision_%": 8.34,
+        "seconds": 8.5,
+        "recall_lost_if_removed_pts": 1.12
+      },
+      {
+        "strategy": "structured",
+        "recall_%": 67.68,
+        "candidates": 2228998,
+        "avg/S1": 22.4,
+        "p95/S1": 82.0,
+        "max/S1": 252,
+        "precision_%": 10.46,
+        "seconds": 13.1,
+        "recall_lost_if_removed_pts": 1.46
+      },
+      {
+        "strategy": "phonetic",
+        "recall_%": 60.0,
+        "candidates": 2273096,
+        "avg/S1": 22.84,
+        "p95/S1": 105.0,
+        "max/S1": 277,
+        "precision_%": 9.09,
+        "seconds": 6.6,
+        "recall_lost_if_removed_pts": 0.6
+      },
+      {
+        "strategy": "rare_name",
+        "recall_%": 44.57,
+        "candidates": 1586154,
+        "avg/S1": 15.94,
+        "p95/S1": 61.0,
+        "max/S1": 184,
+        "precision_%": 9.68,
+        "seconds": 6.7,
+        "recall_lost_if_removed_pts": 0.36
+      },
+      {
+        "strategy": "UNION",
+        "recall_%": 97.58,
+        "candidates": 10311647,
+        "avg/S1": 103.62,
+        "p95/S1": 212.0,
+        "max/S1": 635,
+        "precision_%": 3.26,
+        "seconds": 256.7,
+        "recall_lost_if_removed_pts": null
+      }
+    ],
+    "union_uncapped": {
+      "true_pairs": 344494,
+      "recovered": 336158,
+      "recall": 0.9758,
+      "recall_s2": 0.9775,
+      "recall_s3": 0.9742,
+      "recall_by_country": {
+        "india": {
+          "true_pairs": 137528,
+          "recall": 0.9577
+        },
+        "us": {
+          "true_pairs": 206966,
+          "recall": 0.9879
+        }
+      },
+      "candidates": 10311647,
+      "avg_per_s1": 103.62,
+      "median_per_s1": 94.0,
+      "p95_per_s1": 212.0,
+      "p99_per_s1": 270.0,
+      "max_per_s1": 635,
+      "pct_s1_without_candidates": 0.0,
+      "s1_records": 99514,
+      "pair_precision": 0.0326
+    },
+    "union_cap200": {
+      "true_pairs": 344494,
+      "recovered": 335757,
+      "recall": 0.9746,
+      "recall_s2": 0.9766,
+      "recall_s3": 0.9728,
+      "recall_by_country": {
+        "india": {
+          "true_pairs": 137528,
+          "recall": 0.9552
+        },
+        "us": {
+          "true_pairs": 206966,
+          "recall": 0.9875
+        }
+      },
+      "candidates": 10063806,
+      "avg_per_s1": 101.13,
+      "median_per_s1": 94.0,
+      "p95_per_s1": 200.0,
+      "p99_per_s1": 200.0,
+      "max_per_s1": 200,
+      "pct_s1_without_candidates": 0.0,
+      "s1_records": 99514,
+      "pair_precision": 0.0334
+    },
+    "peak_rss_gb": 1.6,
+    "work_db_gb": 0.32
+  },
+  "full_scale_estimate": {
+    "s1_records": 2206821,
+    "est_pairs": 223175807,
+    "est_parquet_gb": 1.04,
+    "bytes_per_pair_parquet": 4.65,
+    "est_hours_4_threads": 1.6,
+    "suggested_chunks": 220
+  },
+  "disk_after_gb_free": 7.3,
+  "phase3_artifacts_mb": {
+    "features_s1": 163.2,
+    "blocking_stats.duckdb": 349.7,
+    "features_s2": 384.4,
+    "features_s3": 401.6,
+    "materialize_stats.json": 0.0
+  },
+  "notebook_finished": "2026-09-26 11:20:03"
+}

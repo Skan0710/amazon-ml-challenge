@@ -1,275 +1,248 @@
-"""Unit tests for src/blocking.py and src/candidate_generation.py (Phase 3).
-
-Every test builds a tiny S1 / target record table with the real ``blocking_record`` and runs
-the real DuckDB strategy SQL on it.
+"""Unit tests for src/candidate_generation.py (Phase 3).
 
 Run from the project root:
-    python -m pytest tests -q
+    .venv/bin/python -m unittest discover -s tests -t . -v
+The SQL strategies are exercised on tiny synthetic DuckDB tables built with the same
+``blocking_record`` function used on the real data, so the tests cover the real code paths.
 """
 import unittest
 
 import duckdb
-import pyarrow as pa
+import pandas as pd
 
-from src.blocking import (ID_BASE, STRATEGIES, BlockingConfig, blocking_record, entity_rid,
-                          rid_to_entity_id, run_strategy)
-from src.candidate_generation import _arrow_schema, evaluate, evaluate_pairs, union_candidates
+from src import candidate_generation as C
+from src.candidate_generation import (
+    BlockingConfig, STRATEGY_BITS, blocking_record, blocking_records_chunk, candidate_statistics,
+    decode_target_id, encode_entity_id, evaluate_candidate_recall, generate_candidates, normalize_country,
+)
 
 
-def _con(s1_rows, t_rows):
-    """In-memory DuckDB with s1_rec / t_rec built from (entity_id, name, address, country) rows."""
+def make_con(s1_rows, t_rows, gt_pairs=(), cfg=None):
+    """Build feat_s1 / feat_t / q / gt_pairs tables from (entity_id, name, address, country) rows."""
     con = duckdb.connect()
-    schema = _arrow_schema()
-    s1 = pa.Table.from_pylist([blocking_record(*r) for r in s1_rows], schema=schema)
-    t = pa.Table.from_pylist([blocking_record(*r) for r in t_rows], schema=schema)
-    con.register("_s1", s1)
-    con.register("_t", t)
-    con.execute("CREATE TABLE s1_rec AS SELECT * FROM _s1")
-    con.execute("CREATE TABLE t_rec AS SELECT * FROM _t")
+    for table, rows in (("feat_s1", s1_rows), ("feat_t", t_rows)):
+        df = pd.DataFrame(blocking_records_chunk(rows))
+        con.register("df", df)
+        con.execute(f"CREATE TABLE {table} AS SELECT * FROM df")
+        con.unregister("df")
+    con.execute("CREATE TABLE q AS SELECT * FROM feat_s1")
+    gt = [(encode_entity_id(a)[1], encode_entity_id(b)[1], encode_entity_id(b)[0]) for a, b in gt_pairs]
+    con.execute("CREATE TABLE gt_pairs (s1 BIGINT, t BIGINT, src TINYINT)")
+    if gt:
+        con.executemany("INSERT INTO gt_pairs VALUES (?, ?, ?)", gt)
+    C.build_blocking_statistics(con, cfg or BlockingConfig(), log=lambda *a: None)
     return con
 
 
-def _pairs(con, name, cfg=None):
-    run_strategy(con, name, "s1_rec", "t_rec", cfg or BlockingConfig())
-    return {(rid_to_entity_id(a), rid_to_entity_id(b)) for a, b in con.execute(f"SELECT s1, t FROM cand_{name}").fetchall()}
+def pairs(con, strategy=None):
+    flt = f"WHERE mask & {STRATEGY_BITS[strategy]} > 0" if strategy else ""
+    return {(s1, decode_target_id(t)) for s1, t in con.execute(f"SELECT s1, t FROM cand {flt}").fetchall()}
 
 
-class TestIdentifiers(unittest.TestCase):
-    def test_roundtrip(self):
-        for e in ("S1-965667", "S2-681193310", "S3-0"):
-            self.assertEqual(rid_to_entity_id(entity_rid(e)), e)
-        self.assertEqual(entity_rid("S2-681193310"), 2 * ID_BASE + 681193310)
-
-    def test_bad_format(self):
-        for e in ("X1-5", "S1-", "S1-12a", "S12-3", "S1-" + "9" * 11):
+class TestIdsAndCountry(unittest.TestCase):
+    def test_encode_decode(self):
+        self.assertEqual(encode_entity_id("S1-965667"), (1, 965667))
+        self.assertEqual(encode_entity_id("S2-681193310"), (2, 2_681_193_310))
+        self.assertEqual(encode_entity_id("S3-11291185"), (3, 3_011_291_185))
+        self.assertEqual(decode_target_id(3_011_291_185), "S3-11291185")
+        for bad in ("X2-1", "S2-", "S2-12a", "S2-1000000000"):
             with self.assertRaises(ValueError):
-                entity_rid(e)
+                encode_entity_id(bad)
+
+    def test_country_not_hard_coded(self):
+        self.assertEqual(normalize_country(" US "), "us")
+        self.assertEqual(normalize_country("India"), "india")
+        self.assertEqual(normalize_country("Canada"), "canada")
+        self.assertEqual(normalize_country(None), "")
+        self.assertEqual(normalize_country(float("nan")), "")
 
 
-class TestBlockingRecord(unittest.TestCase):
-    def test_uses_phase2_representations(self):
-        r = blocking_record("S1-1", "Wonderland Energy Pvt. Ltd.", "00123 YEAGER RD, COALLTON, WV", "US")
-        self.assertEqual(r["name_core"], "wonderland energy")
-        self.assertEqual(r["name_canon"], "wonderland energy private limited")
-        self.assertEqual((r["addr_state"], r["addr_house"]), ("wv", "123"))
-        self.assertIn("#wo", r["name_grams"])
-        self.assertEqual(len(r["name_grams"]), len(set(r["name_grams"])))   # distinct
+class TestBlockingKeys(unittest.TestCase):
+    def test_name_keys_variants(self):
+        r = blocking_record("Quodova a/k/a Indian International Private Limited", "1 Main St, Austin, TX", "US")
+        self.assertEqual(r["name_keys"].split("|"), ["quodovaindianinternational", "quodova", "indianinternational"])
+        w = blocking_record("wenonahsmetalworks.com", None, "US")
+        n = blocking_record("*** Wenonah's Metal Works LLC", None, "US")
+        self.assertEqual(w["name_key"], n["name_key"])            # website label == compact name
 
-    def test_missing_values_become_none(self):
-        r = blocking_record("S2-7", "Acme", None, "India")
-        self.assertTrue(r["addr_missing"])
-        for col in ("addr_state", "addr_house", "addr_street", "addr_city", "addr_norm", "name_web"):
-            self.assertIsNone(r[col], col)
-        self.assertEqual(r["addr_places"], [])
-        r = blocking_record("S2-8", "   ", "N/A", "US")
-        self.assertIsNone(r["name_core"])
-        self.assertEqual(r["name_tokens"], [])
+    def test_tokens_and_phonetic(self):
+        r = blocking_record("The Fresh Deli & Care Inc", None, "US")
+        self.assertEqual(r["name_tokens"], "fresh deli care")    # stop words + legal form removed
+        a = blocking_record("Family Midwest Associates", None, "US")
+        b = blocking_record("Midwest Family Associates", None, "US")
+        self.assertEqual(a["name_phon"], b["name_phon"])          # order-insensitive phonetic key
+        x = blocking_record("Global Tech Private Limited", None, "India")
+        y = blocking_record("ग्लोबल टेक प्राइवेट लिमिटेड", None, "India")
+        self.assertEqual(x["name_phon"], y["name_phon"])          # cross-script phonetic key
 
-    def test_country_kept_verbatim(self):
-        self.assertEqual(blocking_record("S1-1", "a", "b", " Canada ")["country"], "Canada")
+    def test_structured_fields(self):
+        r = blocking_record("X", "00515 Kitty Hawk Ln, Point Pleasant, West Virginia", "US")
+        self.assertEqual((r["state"], r["hn"], r["street"], r["places"]), ("wv", "515", "kitty hawk ln", "pt pleasant"))
+        self.assertNotIn("wv", r["addr_tokens"].split())
+        i = blocking_record("Y", "H.NO. 69, FARIDABAD, हरियाणा", "India")
+        self.assertEqual((i["state"], i["hn"], i["places"]), ("hr", "69", "faridabad"))
 
-
-class TestCountryPartition(unittest.TestCase):
-    def test_no_cross_country_pairs(self):
-        con = _con([("S1-1", "Sai Traders", "12 MG Road, Pune, Maharashtra", "India")],
-                   [("S2-1", "Sai Traders", "12 MG Road, Pune, MH", "India"),
-                    ("S2-2", "Sai Traders", "12 Main St, Austin, TX", "US")])
-        for name in STRATEGIES:
-            pairs = _pairs(con, name)
-            self.assertNotIn(("S1-1", "S2-2"), pairs, name)
-        self.assertIn(("S1-1", "S2-1"), _pairs(con, "exact_name"))
-
-    def test_new_country_value_works(self):
-        con = _con([("S1-1", "Maple Leaf Foods", "5 King St, Toronto, ON", "Canada")],
-                   [("S2-1", "Maple Leaf Foods", "5 King St, Toronto, ON", "Canada"),
-                    ("S2-2", "Maple Leaf Foods", "5 King St, Toronto, ON", "US")])
-        self.assertEqual(_pairs(con, "core_name"), {("S1-1", "S2-1")})
+    def test_edge_cases(self):
+        for name, addr, country in ((None, None, None), ("", "N/A", ""), ("...", "null", "US"), ("Co", "", "India")):
+            r = blocking_record(name, addr, country)
+            self.assertIsInstance(r, dict)
+            self.assertEqual(r["state"], "")
+            self.assertEqual(r["hn"], "")
+        self.assertEqual(blocking_record("Co", None, "US")["name_keys"], "")   # keys shorter than 3 chars dropped
 
 
-class TestNameStrategies(unittest.TestCase):
+US = "US"
+S1 = [("S1-1", "Wenonah's Metal Works", "181 Farragut Avenue, Hastings-on-hudson, NY", US),
+      ("S1-2", "Reliable Asset Group", "2916 Louisiana Avenue, Halethorpe, MD", US),
+      ("S1-3", "Sky Supreme Products Private Limited", "Flat No.1, Cantonment Po, Aurangabad, Maharashtra", "India"),
+      ("S1-4", "Qzxv Unmatched Holdings", None, US)]
+T = [("S2-10", "WENONAH'S METAL WS", "0181 FARRAGUT AVENUE, HASTINGS-ON-HUDSON, NY", US),   # structured
+     ("S3-11", "wenonahsmetalworks.com", "Hastings On Hudson, New York, 181B Farragut Avenue", US),  # name key
+     ("S2-12", "Reliable Asie Group", "Maryland, Halethorpe, null, 2916 Louisiana Avenue", US),
+     ("S3-13", "स्काई सुप्रीम प्रोडक्ट्स प्राइवेट लिमिटेड", "FLAT NO.1, CANTONMENT PO, AURANGABAD, महाराष्ट्र", "India"),
+     ("S2-14", "Wenonah's Metal Works", "1 Other Road, Mumbai, Maharashtra", "India"),      # other country!
+     ("S2-15", "Unrelated Bakery", "77 Elm Street, Denver, CO", US)]
+GT = [("S1-1", "S2-10"), ("S1-1", "S3-11"), ("S1-2", "S2-12"), ("S1-3", "S3-13")]
+
+
+class TestStrategies(unittest.TestCase):
     def setUp(self):
-        self.con = _con(
-            [("S1-1", "Wonderland Energy Pvt. Ltd.", "4 Park St, Kolkata, West Bengal", "India"),
-             ("S1-2", "Wenonah's Metal Works", "9 Elm St, Austin, TX", "US"),
-             ("S1-3", "Indian International Private Limited", "7 Ring Rd, Delhi, Delhi", "India")],
-            [("S2-1", "WONDERLAND ENERGY PRIVATE LIMITED", "4 PARK ST, KOLKATA, পশ্চিমবঙ্গ", "India"),
-             ("S3-1", "Private Wonderland Energy Ltd", None, "India"),
-             ("S3-2", "Wonderland Energy LLP", "1 Other Rd, Pune, MH", "India"),
-             ("S2-2", "wenonahsmetalworks.com", "9 ELM ST, AUSTIN, TX", "US"),
-             ("S3-3", "Quodova a/k/a Indian International Private Limited", "Delhi, DL", "India")])
+        self.con = make_con(S1, T, GT)
 
-    def test_exact_name(self):
-        pairs = _pairs(self.con, "exact_name")
-        self.assertIn(("S1-1", "S2-1"), pairs)          # pvt ltd == private limited after canonicalisation
-        self.assertNotIn(("S1-1", "S3-2"), pairs)       # different legal form -> not an exact name
+    def test_country_partitioning(self):
+        generate_candidates(self.con, list(STRATEGY_BITS), BlockingConfig(), log=lambda *a: None)
+        got = pairs(self.con)
+        self.assertNotIn((1, "S2-14"), got)        # same name, different country -> never a candidate
+        self.assertFalse(any(t == "S2-15" for _, t in got if _ == 3))
 
-    def test_core_name(self):
-        pairs = _pairs(self.con, "core_name")
-        self.assertTrue({("S1-1", "S2-1"), ("S1-1", "S3-1"), ("S1-1", "S3-2")} <= pairs)
+    def test_each_strategy(self):
+        generate_candidates(self.con, list(STRATEGY_BITS), BlockingConfig(), log=lambda *a: None)
+        self.assertIn((1, "S3-11"), pairs(self.con, "name"))
+        self.assertIn((1, "S2-10"), pairs(self.con, "structured"))
+        self.assertIn((2, "S2-12"), pairs(self.con, "structured"))
+        self.assertIn((3, "S3-13"), pairs(self.con, "phonetic"))
 
-    def test_website(self):
-        self.assertEqual(_pairs(self.con, "website"), {("S1-2", "S2-2")})
+    def test_dedup_and_mask(self):
+        generate_candidates(self.con, ["name", "structured", "rare_addr"], BlockingConfig(), log=lambda *a: None)
+        n, d = self.con.execute("SELECT COUNT(*), COUNT(DISTINCT (s1, t)) FROM cand").fetchone()
+        self.assertEqual(n, d)                      # one row per pair
+        m = self.con.execute("SELECT mask FROM cand WHERE s1 = 1 AND t = 2000000010").fetchone()[0]
+        self.assertTrue(m & STRATEGY_BITS["structured"] and m & STRATEGY_BITS["rare_addr"])
 
-    def test_alias(self):
-        self.assertIn(("S1-3", "S3-3"), _pairs(self.con, "alias"))
+    def test_recall_evaluation(self):
+        generate_candidates(self.con, list(STRATEGY_BITS), BlockingConfig(), log=lambda *a: None)
+        ev = evaluate_candidate_recall(self.con)
+        self.assertEqual((ev["true_pairs"], ev["recovered"], ev["recall"]), (4, 4, 1.0))
+        self.assertEqual(ev["s1_records"], 4)
+        ev_name = evaluate_candidate_recall(self.con, mask=STRATEGY_BITS["name"])
+        self.assertLess(ev_name["recovered"], 4)
+        st = candidate_statistics(self.con)
+        self.assertGreaterEqual(st["pct_s1_without_candidates"], 25.0)   # S1-4 has no candidates
 
-
-class TestPhonetic(unittest.TestCase):
-    def test_cross_script_and_word_order(self):
-        con = _con([("S1-1", "Guru Technology Private Limited", "Kolkata, WB", "India"),
-                    ("S1-2", "Wonderland Energy LLC", "1 A St, Reno, NV", "US")],
-                   [("S2-1", "গুরু টেকনোলজি প্রাইভেট লিমিটেড", "KOLKATA, পশ্চিমবঙ্গ", "India"),
-                    ("S3-1", "Energy Wonderland LLC", "1 A St, Reno, Nevada", "US"),
-                    ("S3-2", "Garden Tools LLC", "1 A St, Reno, Nevada", "US")])
-        pairs = _pairs(con, "phonetic")
-        # 'guru' and Bengali গুরু share a phonetic token, although the full keys differ
-        # ('guru teknolji' vs 'guru technology'): the shared-phonetic-token leg finds it.
-        self.assertIn(("S1-1", "S2-1"), pairs)
-        self.assertIn(("S1-2", "S3-1"), pairs)          # word-order swap: whole-key leg
-        self.assertNotIn(("S1-2", "S3-2"), pairs)
+    def test_empty_strategy_list(self):
+        info = generate_candidates(self.con, [], log=lambda *a: None)
+        self.assertEqual(info["_union_pairs"], 0)
+        self.assertEqual(evaluate_candidate_recall(self.con)["recall"], 0.0)
 
 
-class TestAddressStrategies(unittest.TestCase):
-    def setUp(self):
-        self.con = _con(
-            [("S1-1", "Alpha", "00123 YEAGER RD, COALLTON, WV", "US"),
-             ("S1-2", "Beta", "Friends Colony, Sector 14, Gurgaon, Haryana", "India"),
-             ("S1-3", "Gamma", "Coallton, WV", "US")],                       # no house number
-            [("S2-1", "Totally Different", "123 Yeager Road, Coalton, West Virginia", "US"),
-             ("S2-2", "Other", "123 Main St, Denver, CO", "US"),               # same number, other state
-             ("S3-1", "Beta Ent", "SECTOR 14, GURGAON, हरियाणा", "India"),
-             ("S3-2", "Delta", "Mack Rd, Coallton, West Virginia", "US")])     # no house number
-
-    def test_state_house(self):
-        pairs = _pairs(self.con, "state_house")
-        self.assertIn(("S1-1", "S2-1"), pairs)
-        self.assertNotIn(("S1-1", "S2-2"), pairs)
-
-    def test_missing_house_number_never_blocks(self):
-        # (wv, NULL) must not become a block: S1-3 and S3-2 share only the state
-        pairs = _pairs(self.con, "state_house")
-        self.assertFalse({p for p in pairs if "S1-3" in p or "S3-2" in p})
-
-    def test_place_number(self):
-        self.assertIn(("S1-2", "S3-1"), _pairs(self.con, "place_number"))
-
-    def test_missing_address(self):
-        con = _con([("S1-1", "Alpha", None, "US")], [("S2-1", "Beta", None, "US")])
-        for name in ("state_house", "place_number"):
-            self.assertEqual(_pairs(con, name), set(), name)
+class TestGroundTruthLoader(unittest.TestCase):
+    def test_load_from_tsv(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "gt.tsv")
+            with open(path, "w") as f:
+                f.write("source1_entity_id\tmatched_entity_ids\n")
+                f.write("S1-1\tS2-10, S3-999999999\n")
+                f.write("S1-2\t\n")                                  # no matches
+                f.write("S1-3\tS3-11\n")
+            con = duckdb.connect()
+            con.execute("CREATE TABLE ids AS SELECT 1 AS id UNION ALL SELECT 2")
+            self.assertEqual(C.load_ground_truth_pairs(con, path), 3)
+            self.assertEqual(sorted(con.execute("SELECT s1, t, src FROM gt_pairs").fetchall()),
+                             [(1, 2_000_000_010, 2), (1, 3_999_999_999, 3), (3, 3_000_000_011, 3)])
+            self.assertEqual(C.load_ground_truth_pairs(con, path, s1_filter_sql="SELECT id FROM ids"), 2)
 
 
-class TestRareToken(unittest.TestCase):
-    def test_rare_vs_common_tokens(self):
-        t_rows = [(f"S2-{i}", f"Sunrise Services {i}", f"{i} Main St, Austin, TX", "US") for i in range(1, 8)]
-        t_rows.append(("S3-1", "Quixotic Services", "5 Oak St, Dallas, TX", "US"))
-        con = _con([("S1-1", "Quixotic Services Inc", "9 Pine St, Waco, TX", "US")], t_rows)
-        cfg = BlockingConfig(rare_token_max_df=3)
-        pairs = _pairs(con, "rare_token", cfg)
-        # 'services' has df 8 > 3 in the whole of TX -> dropped; 'quixotic' (df 1) is used
-        self.assertEqual(pairs, {("S1-1", "S3-1")})
+class TestCapsAndRareTokens(unittest.TestCase):
+    def test_name_cap_falls_back_to_state(self):
+        # 5 targets called "Eye Group" in 5 states; national cap 3 -> only the same-state one
+        t = [(f"S2-{i}", "Eye Group", f"{i} Main St, Springfield, {st}", US)
+             for i, st in enumerate(["IL", "OH", "MO", "MA", "OR"], start=1)]
+        cfg = BlockingConfig(name_cap=3, name_state_cap=3)
+        con = make_con([("S1-1", "Eye Group LLC", "9 Oak Ave, Chicago, IL", US)], t, cfg=cfg)
+        C.generate_exact_name_candidates(con, cfg)
+        self.assertEqual(con.execute("SELECT t FROM cand_name").fetchall(), [(2_000_000_001,)])
+        cfg2 = BlockingConfig(name_cap=3, name_state_cap=0)          # state block too big too -> dropped
+        con2 = make_con([("S1-1", "Eye Group LLC", "9 Oak Ave, Chicago, IL", US)], t, cfg=cfg2)
+        meta = C.generate_exact_name_candidates(con2, cfg2)
+        self.assertEqual(con2.execute("SELECT COUNT(*) FROM cand_name").fetchone()[0], 0)
+        self.assertEqual(meta["keys_dropped_over_cap"], 2)          # counted per bucket: IL + no-state
 
-    def test_common_token_refined_by_state(self):
-        t_rows = [(f"S2-{i}", f"Sunrise Services {i}", f"{i} Main St, Austin, TX", "US") for i in range(1, 8)]
-        t_rows.append(("S3-1", "Sunrise Bakery", "5 Oak St, Reno, NV", "US"))
-        con = _con([("S1-1", "Sunrise Cafe", "9 Pine St, Reno, NV", "US")], t_rows)
-        pairs = _pairs(con, "rare_token", BlockingConfig(rare_token_max_df=3))
-        # 'sunrise' has df 8 overall but only 1 in NV -> the refined (token, state) block is used
-        self.assertEqual(pairs, {("S1-1", "S3-1")})
+    def test_stateless_fallback(self):
+        # target has no address (state = '') -> reachable only through the no-state bucket
+        t = [("S3-7", "Zygomatic Holdings", None, US)] + \
+            [(f"S2-{i}", f"Zygomatic Other{i}", f"{i} Main St, Austin, TX", US) for i in range(1, 4)]
+        s1 = [("S1-1", "Zygomatic Holdings LLC", "5 C St, Dallas, TX", US)]
+        for fallback, expected in ((True, {3_000_000_007}), (False, set())):
+            cfg = BlockingConfig(stateless_fallback=fallback)
+            con = make_con(s1, t, cfg=cfg)
+            C.generate_rare_token_candidates(con, cfg, "rare_name")
+            got = {r[0] for r in con.execute("SELECT t FROM cand_rare_name").fetchall()}
+            self.assertEqual(got & {3_000_000_007}, expected)
 
-    def test_short_tokens_ignored(self):
-        con = _con([("S1-1", "A B Holdings", "1 X St, Reno, NV", "US")],
-                   [("S2-1", "A Zed", "2 Y St, Reno, NV", "US")])
-        self.assertEqual(_pairs(con, "rare_token"), set())
+    def test_rare_token_selection(self):
+        # 'services' is common (4 targets), 'zygomatic' is rare (1 target): with k=1 and cap=2
+        # only the rare token is used.
+        t = [("S2-1", "Zygomatic Labs", "1 A St, Austin, TX", US)] + \
+            [(f"S2-{i}", f"Other{i} Services", f"{i} B St, Austin, TX", US) for i in range(2, 6)]
+        cfg = BlockingConfig(token_k=1, token_df_cap=2)
+        con = make_con([("S1-1", "Zygomatic Services", "5 C St, Dallas, TX", US)], t, cfg=cfg)
+        C.generate_rare_token_candidates(con, cfg, "rare_name")
+        self.assertEqual(con.execute("SELECT k FROM qt").fetchall(), [("zygomatic",)])
+        self.assertEqual(con.execute("SELECT t FROM cand_rare_name").fetchall(), [(2_000_000_001,)])
 
+    def test_structured_refinement(self):
+        # 3 targets at '100' in TX; hn_cap=2 forces refinement by place/street
+        t = [("S2-1", "A", "100 Main St, Austin, TX", US), ("S2-2", "B", "100 Oak St, Dallas, TX", US),
+             ("S2-3", "C", "100 Elm St, Houston, TX", US)]
+        cfg = BlockingConfig(hn_cap=2, hn_refined_cap=5)
+        con = make_con([("S1-1", "Z", "100 Oak Street, Plano, Texas", US)], t, cfg=cfg)
+        C.generate_structured_candidates(con, cfg)
+        self.assertEqual(con.execute("SELECT t FROM cand_structured").fetchall(), [(2_000_000_002,)])
 
-class TestTrigram(unittest.TestCase):
-    def test_typo_retrieved_unrelated_not(self):
-        con = _con([("S1-1", "Holloway Peak Seafood", "1 Elm St, Morganton, NC", "US")],
-                   [("S2-1", "Hollowya Peak Seafood Inc", "1 ELM ST, MORGANTON, NC", "US"),
-                    ("S3-1", "H0lloway Peak Seaf00d", "Morganton, NC", "US"),
-                    ("S3-2", "Cedar Ridge Dental", "1 Elm St, Morganton, NC", "US")])
-        pairs = _pairs(con, "trigram")
-        self.assertIn(("S1-1", "S2-1"), pairs)
-        self.assertIn(("S1-1", "S3-1"), pairs)
-        self.assertNotIn(("S1-1", "S3-2"), pairs)
+    def test_explosion_guard(self):
+        t = [(f"S2-{i}", "Acme", f"{i} Main St, Austin, TX", US) for i in range(1, 30)]
+        con = make_con([("S1-1", "Acme", "1 Main St, Austin, TX", US)], t)
+        info = generate_candidates(con, ["name"], BlockingConfig(), max_raw_pairs=10, log=lambda *a: None)
+        self.assertEqual(info["name"]["status"], "stopped")
+        self.assertEqual(info["_union_pairs"], 0)
 
-    def test_top_k_limits_candidates(self):
-        t_rows = [(f"S2-{i}", f"Holloway Peak Seafood {i}", "1 Elm St, Morganton, NC", "US") for i in range(10)]
-        con = _con([("S1-1", "Holloway Peak Seafood", "1 Elm St, Morganton, NC", "US")], t_rows)
-        cfg = BlockingConfig(trigram_top_k=3, trigram_batches=2)
-        self.assertEqual(len(_pairs(con, "trigram", cfg)), 3)
+    def test_chunked_equals_single_run(self):
+        con = make_con(S1, T, GT)
+        cfg = BlockingConfig(per_s1_cap=None)
+        generate_candidates(con, list(STRATEGY_BITS), cfg, log=lambda *a: None)
+        single = set(con.execute("SELECT s1, t, mask FROM cand").fetchall())
+        con.execute("CREATE TABLE q_all AS SELECT * FROM q")
+        C.generate_candidates_chunked(con, list(STRATEGY_BITS), cfg, n_chunks=3, min_free_gb=0, log=lambda *a: None)
+        self.assertEqual(set(con.execute("SELECT s1, t, mask FROM cand").fetchall()), single)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM q").fetchone()[0], 4)   # q restored
 
+    def test_chunks_independent_of_hash_sampling(self):
+        # a query set sampled with hash(id) % 22 = 0 must still spread over all chunks
+        con = duckdb.connect()
+        con.execute("CREATE TABLE q_all AS SELECT i AS id FROM range(0, 200000) t(i) WHERE hash(i) % 22 = 0")
+        sizes = [r[0] for r in con.execute("SELECT COUNT(*) FROM q_all GROUP BY hash(id, 1) % 10 ORDER BY 1").fetchall()]
+        self.assertEqual(len(sizes), 10)
+        self.assertGreater(min(sizes), 0.8 * max(sizes))
 
-class TestCommonKeyProtection(unittest.TestCase):
-    def setUp(self):
-        states = ["Texas"] * 6 + ["Nevada"] * 2 + ["Ohio"] * 4
-        self.con = _con([("S1-1", "Eye Group", "1 A St, Reno, NV", "US"),
-                         ("S1-2", "Eye Group", "1 A St, Dayton, OH", "US")],
-                        [(f"S2-{i}", "Eye Group", f"{i} B St, City, {s}", "US") for i, s in enumerate(states)])
-
-    def test_oversized_key_refined_or_dropped(self):
-        cfg = BlockingConfig(max_block_name=3)
-        run = run_strategy(self.con, "core_name", "s1_rec", "t_rec", cfg)
-        pairs = {(a % ID_BASE, b % ID_BASE) for a, b in self.con.execute("SELECT s1, t FROM cand_core_name").fetchall()}
-        # the 'eye group' key has 12 targets > 3, so it is refined by state: the NV block (2
-        # targets) is kept, the OH (4) and TX (6) blocks are still too large and are dropped.
-        # S1-1 is in NV and S1-2 in OH, so only S1-1 gets candidates.
-        self.assertEqual(pairs, {(1, 6), (1, 7)})
-        self.assertEqual(run["keys_oversized"], 1)
-        self.assertEqual(run["refined_blocks_kept"], 1)
-        self.assertEqual(run["refined_blocks_dropped"], 2)
-        self.assertEqual(run["largest_dropped_block"], 12)
-
-    def test_block_within_cap_is_used_whole(self):
-        run_strategy(self.con, "core_name", "s1_rec", "t_rec", BlockingConfig(max_block_name=50))
-        self.assertEqual(self.con.execute("SELECT count(*) FROM cand_core_name").fetchone()[0], 24)
-
-    def test_per_s1_candidates_bounded(self):
-        run_strategy(self.con, "core_name", "s1_rec", "t_rec", BlockingConfig(max_block_name=3))
-        mx = self.con.execute("SELECT coalesce(max(n), 0) FROM (SELECT s1, count(*) n FROM cand_core_name GROUP BY s1)").fetchone()[0]
-        self.assertLessEqual(mx, 3)
-
-
-class TestUnionAndEvaluation(unittest.TestCase):
-    def setUp(self):
-        self.con = _con([("S1-1", "Wonderland Energy Pvt Ltd", "4 Park St, Kolkata, West Bengal", "India"),
-                         ("S1-2", "Blue Fin Sushi", "8 Bay Rd, Tampa, FL", "US")],
-                        [("S2-1", "Wonderland Energy Private Limited", "4 PARK ST, KOLKATA, WB", "India"),
-                         ("S3-1", "Unrelated Name", "4 Park Street, Kolkata, WB", "India"),
-                         ("S3-2", "Red Fox Tavern", "99 Oak Ave, Miami, FL", "US")])
-        self.names = ["exact_name", "core_name", "state_house"]
-        for n in self.names:
-            run_strategy(self.con, n, "s1_rec", "t_rec", BlockingConfig())
-        self.con.execute(f"""CREATE TABLE gt AS SELECT * FROM (VALUES
-            ({entity_rid('S1-1')}, {entity_rid('S2-1')}), ({entity_rid('S1-1')}, {entity_rid('S3-1')}),
-            ({entity_rid('S1-2')}, {entity_rid('S3-2')})) v(s1, t)""")
-
-    def test_deduplication(self):
-        n = union_candidates(self.con, self.names)
-        rows = self.con.execute("SELECT s1, t, mask FROM cand_all").fetchall()
-        self.assertEqual(n, len(rows))
-        self.assertEqual(len({(a, b) for a, b, _ in rows}), len(rows))            # one row per pair
-        mask = {(a, b): m for a, b, m in rows}[(entity_rid("S1-1"), entity_rid("S2-1"))]
-        self.assertEqual(mask, 0b111)                                             # found by all three
-        for name in self.names:                                                   # each strategy table distinct
-            c, d = self.con.execute(f"SELECT count(*), count(DISTINCT (s1, t)) FROM cand_{name}").fetchone()
-            self.assertEqual(c, d)
-
-    def test_recall_precision(self):
-        union_candidates(self.con, self.names)
-        res = evaluate(self.con, self.names, verbose=False)
-        self.assertEqual(res["total_true_pairs"], 3)
-        self.assertEqual(res["union"]["true_found"], 2)                           # S3-2 is unreachable
-        self.assertAlmostEqual(res["union"]["recall_pct"], 66.667, places=2)
-        self.assertEqual(res["union"]["candidates"], 2)
-        self.assertEqual(res["union"]["precision_pct"], 100.0)
-        self.assertEqual(res["per_strategy"]["exact_name"]["true_found"], 1)
-        self.assertEqual([r["recall_pct"] for r in res["incremental"]], [33.333, 33.333, 66.667])
-        self.assertEqual(res["unique"]["state_house"]["true_pairs_only_this"], 1)
-        # per-S1 statistics count S1 records without candidates as 0
-        m = evaluate_pairs(self.con, "SELECT s1, t FROM cand_exact_name")
-        self.assertEqual((m["avg_per_s1"], m["max_per_s1"], m["s1_with_candidates_pct"]), (0.5, 1, 50.0))
+    def test_per_s1_cap(self):
+        t = [(f"S2-{i}", "Acme Widgets", f"{i} Main St, Austin, TX", US) for i in range(1, 6)]
+        con = make_con([("S1-1", "Acme Widgets", "3 Main St, Austin, TX", US)], t)
+        generate_candidates(con, ["name", "structured"], log=lambda *a: None)
+        removed = C.apply_per_s1_cap(con, 2, ["structured", "name"])
+        self.assertEqual(removed, 3)
+        kept = [r[0] for r in con.execute("SELECT t FROM cand ORDER BY t").fetchall()]
+        self.assertIn(2_000_000_003, kept)       # found by both strategies -> kept first
 
 
 if __name__ == "__main__":

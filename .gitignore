@@ -22,13 +22,10 @@ data/raw/*.tsv
 data/raw/*.csv
 data/processed/*.tsv
 data/processed/*.csv
-data/processed/
-# Phase 3 generated artefacts (normalised records, candidate DB, spill) - never commit
-*.parquet
+data/processed/*.parquet
 data/processed/*.duckdb
 data/processed/*.duckdb.wal
 data/processed/duckdb_tmp/
-.venv/
 # ...and anywhere else in the repo (training/test TSVs, CSVs, DuckDB files)
 *.tsv
 *.csv
@@ -61,3 +58,14 @@ logs/
 # Experiment artifacts
 experiments/**/*.pkl
 experiments/**/*.joblib
+
+# Phase 3 derived artefacts (feature Parquet parts, blocking statistics, candidates)
+*.parquet
+data/processed/phase3/
+
+# Phase 4 intermediates (never commit): working DBs, features, pilot/dry-run artefacts, temp outputs
+data/processed/
+output/pilots/
+*.tsv.tmp
+**/duckdb_tmp/
+**/validator_shards/
