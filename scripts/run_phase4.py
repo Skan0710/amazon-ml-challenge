@@ -278,7 +278,8 @@ def clean(o):
 
 def run_inference(dataset_dir: Path, prefix: str, work_dir: Path, model, rule: M.DecisionRule, out_dir: Path,
                   cand_chunks: int, infer_chunks: int, workers: int = 4, min_free_gb: float = MIN_FREE_GB,
-                  official_validator: Path = OFFICIAL_VALIDATOR, log=print) -> dict:
+                  official_validator: Path = OFFICIAL_VALIDATOR, resume_candidates: bool = False, infer_threads: int = 2,
+                  resumable_inference: bool = False, min_free_write_gb: float = MIN_FREE_GB, log=print) -> dict:
     """End-to-end inference on an unlabelled dataset directory (``{prefix}_source{1,2,3}.tsv``):
     Phase 3 features + statistics of THAT dataset -> candidates (Parquet parts) -> streaming
     features/scores/decision -> candidate_pairs.tsv + matching_results.tsv -> both validators.
@@ -299,21 +300,42 @@ def run_inference(dataset_dir: Path, prefix: str, work_dir: Path, model, rule: M
     R["timings_s"]["statistics"] = round(time.time() - t, 1)
     con.execute("CREATE OR REPLACE TABLE q_all AS SELECT * FROM feat_s1")
     t = time.time()
-    shutil.rmtree(work_dir / "candidates", ignore_errors=True)
-    gen = C.generate_candidates_chunked(con, DEFAULT_STRATEGIES, BlockingConfig(), n_chunks=cand_chunks,
-                                        out_parquet_dir=work_dir / "candidates", min_free_gb=min_free_gb, log=log)
-    con.execute("DROP TABLE IF EXISTS cand")          # last chunk's table left by the Parquet-mode generator
-    con.execute(f"CREATE OR REPLACE VIEW cand AS SELECT * FROM read_parquet('{work_dir / 'candidates'}/*.parquet')")
+    cand_dir = work_dir / "candidates"
+    marker = cand_dir / "_SUCCESS"
+    if resume_candidates:
+        # explicit resume: reuse the parts of a finished generation (all n parts present and verified below)
+        log(f"resuming from existing candidate parts in {cand_dir}")
+        gen = None
+    else:
+        shutil.rmtree(cand_dir, ignore_errors=True)
+        gen = C.generate_candidates_chunked(con, DEFAULT_STRATEGIES, BlockingConfig(), n_chunks=cand_chunks,
+                                            out_parquet_dir=cand_dir, min_free_gb=min_free_gb, log=log)
+    # `cand` may exist as a TABLE (last chunk left by the Parquet-mode generator) or as a VIEW (previous run)
+    kinds = {r[0] for r in con.execute("SELECT 'table' FROM duckdb_tables() WHERE table_name = 'cand' AND database_name = current_database() "
+                                       "UNION ALL SELECT 'view' FROM duckdb_views() WHERE view_name = 'cand' AND database_name = current_database()").fetchall()}
+    if "table" in kinds:
+        con.execute("DROP TABLE cand")
+    con.execute(f"CREATE OR REPLACE VIEW cand AS SELECT * FROM read_parquet('{cand_dir}/part-*.parquet')")
     R["timings_s"]["candidates"] = round(time.time() - t, 1)
-    dup = con.execute("SELECT COUNT(*) - COUNT(DISTINCT (s1, t)) FROM cand").fetchone()[0]
-    if dup:
-        raise M.SubmissionError(f"{dup} duplicate candidate pairs")
-    R["candidates"] = {"raw_strategy_rows": int(sum(v["pairs"] for v in gen["per_strategy"].values())),
-                       "unique_pairs": int(con.execute("SELECT COUNT(*) FROM cand").fetchone()[0]), "duplicates_remaining": 0}
+    parts = M.verify_candidate_parts(con, cand_dir, expected_parts=cand_chunks)      # per-part: bounded memory
+    marker.write_text(json.dumps(parts))
+    R["candidates"] = {**parts, "duplicates_remaining": 0, "resumed": bool(resume_candidates),
+                       "raw_strategy_rows": int(sum(v["pairs"] for v in gen["per_strategy"].values())) if gen else None}
+    log(f"candidates verified: {parts}")
     t = time.time()
-    R["inference"] = M.infer_chunked(con, "SELECT * FROM cand", model, rule, n_chunks=infer_chunks, min_free_gb=min_free_gb, log=log)
+    # fewer DuckDB threads during feature computation: each thread keeps its own hash tables, and at
+    # 4 threads a ~780k-pair chunk exhausted non-spillable memory on the full test set (2 threads: 1.3 GB peak)
+    con.execute(f"SET threads={int(infer_threads)}")
+    if resumable_inference:
+        R["inference"] = M.infer_chunked_resumable(con, "SELECT * FROM cand", model, rule, n_chunks=infer_chunks,
+                                                   parts_dir=work_dir / "pred_parts", min_free_gb=min_free_gb, log=log)
+        con.execute(f"CREATE OR REPLACE TABLE pred AS SELECT * FROM read_parquet('{work_dir / 'pred_parts'}/pred-*.parquet')")
+    else:
+        R["inference"] = M.infer_chunked(con, "SELECT * FROM cand", model, rule, n_chunks=infer_chunks, min_free_gb=min_free_gb, log=log)
+    con.execute("SET threads=4")
+    R["inference"]["threads"] = int(infer_threads)
     R["timings_s"]["inference"] = round(time.time() - t, 1)
-    R["no_forced_matches"] = M.verify_no_forced_matches(con, "pred", "SELECT s1, t FROM cand", rule)
+    R["no_forced_matches"] = M.verify_no_forced_matches(con, "pred", "SELECT s1, t FROM cand", rule, n_chunks=infer_chunks)
     # ---- write ONLY temporary files; publish atomically after both validators pass
     out_dir.mkdir(parents=True, exist_ok=True)
     finals = {"candidate": out_dir / "candidate_pairs.tsv", "matching": out_dir / "matching_results.tsv"}
@@ -322,7 +344,7 @@ def run_inference(dataset_dir: Path, prefix: str, work_dir: Path, model, rule: M
         p.unlink(missing_ok=True)
     t = time.time()
     universe = "SELECT id, entity_id, rn FROM text_s1"
-    C.check_disk(out_dir, min_free_gb)
+    C.check_disk(out_dir, min_free_write_gb)          # the ~2.4 GB write keeps its own (strict) guard
     R["outputs"] = {"candidate_pairs": M.write_candidate_pairs_tsv(con, universe, "SELECT s1, t FROM cand", tmps["candidate"]),
                     "matching_results": M.write_matching_results_tsv(con, universe, "SELECT s1, t FROM pred", tmps["matching"])}
     con.close()
@@ -373,7 +395,16 @@ def main():
     t.add_argument("--model", type=Path, required=True)
     t.add_argument("--rule", type=Path, required=True)
     t.add_argument("--chunks", type=int, default=220, help="candidate-generation S1 chunks (~7.9k S1 each)")
-    t.add_argument("--infer-chunks", type=int, default=110, help="feature/scoring S1 chunks (~1.6M pairs each)")
+    t.add_argument("--infer-chunks", type=int, default=440, help="feature/scoring S1 chunks (~390k pairs each, as used for the submission)")
+    t.add_argument("--infer-threads", type=int, default=2, help="DuckDB threads during feature computation")
+    t.add_argument("--min-free-gb", type=float, default=MIN_FREE_GB,
+                   help="free-disk guard checked before every chunk (spill is capped at 2 GB per chunk)")
+    t.add_argument("--min-free-write-gb", type=float, default=MIN_FREE_GB,
+                   help="free-disk guard checked before writing the ~2.4 GB output files")
+    t.add_argument("--resumable-inference", action="store_true",
+                   help="write per-chunk prediction parts and skip finished chunks on restart")
+    t.add_argument("--resume-candidates", action="store_true",
+                   help="reuse the candidate Parquet parts of a finished generation (verified per part)")
     t.add_argument("--i-approve-full-scale", action="store_true",
                    help="required: the test run is the full-scale job (~1.7M S1, ~10^8 candidate pairs)")
     a = ap.parse_args()
@@ -385,7 +416,9 @@ def main():
         import joblib
         rule = M.DecisionRule(**json.loads(a.rule.read_text()))
         R = run_inference(a.dataset_dir, "test", P4 / "test_run", joblib.load(a.model), rule, ROOT / "output",
-                          cand_chunks=a.chunks, infer_chunks=a.infer_chunks)
+                          cand_chunks=a.chunks, infer_chunks=a.infer_chunks, resume_candidates=a.resume_candidates,
+                          infer_threads=a.infer_threads, resumable_inference=a.resumable_inference,
+                          min_free_gb=a.min_free_gb, min_free_write_gb=a.min_free_write_gb)
         (ROOT / "output" / "phase4_metrics.json").write_text(json.dumps(clean(R), indent=2))
 
 

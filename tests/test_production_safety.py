@@ -10,6 +10,7 @@
 Run: .venv/bin/python -m unittest discover -s tests -t . -v
 """
 import importlib.util
+import numpy as np
 import os
 import tempfile
 import unittest
@@ -230,3 +231,101 @@ class TestNoForcedMatches(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ------------------------------------------------------------------------------------ full-scale fixes (post-crash)
+class TestCandidatePartsAndResume(Base):
+    def _parts(self, d, rows_by_part):
+        import duckdb
+        c = duckdb.connect()
+        for i, rows in enumerate(rows_by_part):
+            vals = ", ".join(f"({a}::BIGINT, {b}::BIGINT, 1::USMALLINT)" for a, b in rows) or "(0::BIGINT, 0::BIGINT, 0::USMALLINT)"
+            where = "" if rows else " WHERE FALSE"
+            c.execute(f"COPY (SELECT * FROM (VALUES {vals}) v(s1, t, mask){where}) TO '{Path(d) / f'part-{i:05d}.parquet'}' (FORMAT parquet)")
+        c.close()
+
+    def test_verify_candidate_parts(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._parts(d, [[(1, 2000000010), (1, 3000000011)], [(2, 2000000012)]])
+            r = M.verify_candidate_parts(self.con, d, expected_parts=2)
+            self.assertEqual((r["unique_pairs"], r["s1_with_candidates"]), (3, 2))
+            with self.assertRaises(M.SubmissionError):
+                M.verify_candidate_parts(self.con, d, expected_parts=3)            # missing part
+        with tempfile.TemporaryDirectory() as d:
+            self._parts(d, [[(1, 2000000010), (1, 2000000010)], [(2, 2000000012)]])
+            with self.assertRaises(M.SubmissionError):                              # duplicate inside a part
+                M.verify_candidate_parts(self.con, d)
+        with tempfile.TemporaryDirectory() as d:
+            self._parts(d, [[(1, 2000000010)], [(1, 3000000011)]])
+            with self.assertRaises(M.SubmissionError):                              # S1 split across parts
+                M.verify_candidate_parts(self.con, d)
+
+    def test_chunked_forced_match_gate_equals_single(self):
+        rule = M.DecisionRule(threshold=0.5)
+        self.con.execute("CREATE OR REPLACE TABLE pg2 AS SELECT s1, t, 0.9 p FROM cand")
+        for k in (1, 3, 7):
+            self.assertEqual(M.verify_no_forced_matches(self.con, "pg2", "SELECT s1, t FROM cand", rule, n_chunks=k)["predicted_not_candidate"], 0)
+        self.con.execute("INSERT INTO pg2 VALUES (1, 3000000013, 0.9)")                 # not a candidate of S1-1
+        for k in (1, 3, 7):
+            with self.assertRaises(M.SubmissionError):
+                M.verify_no_forced_matches(self.con, "pg2", "SELECT s1, t FROM cand", rule, n_chunks=k)
+
+    def test_resume_candidates_gives_identical_outputs(self):
+        from tests.test_matching import StubModel
+        spec = importlib.util.spec_from_file_location("run_phase4", ROOT / "scripts" / "run_phase4.py")
+        R4 = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(R4)
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "ds").mkdir()
+            ds = make_dataset(Path(d) / "ds", prefix="test")
+            os.remove(ds / "test_ground_truth.tsv")
+            kw = dict(cand_chunks=2, infer_chunks=2, workers=1, min_free_gb=0, min_free_write_gb=0, log=lambda *a: None)
+            R4.run_inference(ds, "test", Path(d) / "work", StubModel(), M.DecisionRule(threshold=0.9), Path(d) / "o1", **kw)
+            res = R4.run_inference(ds, "test", Path(d) / "work", StubModel(), M.DecisionRule(threshold=0.9), Path(d) / "o2",
+                                   resume_candidates=True, **kw)
+            self.assertTrue(res["candidates"]["resumed"])
+            for f in ("candidate_pairs.tsv", "matching_results.tsv"):
+                self.assertEqual((Path(d) / "o1" / f).read_bytes(), (Path(d) / "o2" / f).read_bytes())
+
+
+class TestResumableInference(Base):
+    def test_equals_streaming_and_resumes(self):
+        from tests.test_matching import StubModel
+        rule = M.DecisionRule(threshold=0.7)
+        M.infer_chunked(self.con, "SELECT * FROM cand", StubModel(), rule, n_chunks=3, pred_table="pa", min_free_gb=0, log=lambda *a: None)
+        ref = set(self.con.execute("SELECT s1, t FROM pa").fetchall())
+        with tempfile.TemporaryDirectory() as d:
+            r = M.infer_chunked_resumable(self.con, "SELECT * FROM cand", StubModel(), rule, 3, d, batch_rows=2, min_free_gb=0, log=lambda *a: None)
+            got = set(self.con.execute(f"SELECT s1, t FROM read_parquet('{d}/pred-*.parquet')").fetchall())
+            self.assertEqual(got, ref)
+            os.remove(Path(d) / "pred-00001.parquet")                     # simulate a crash before chunk 1 finished
+            (Path(d) / "pred-00001.parquet.tmp").write_text("partial")
+            r2 = M.infer_chunked_resumable(self.con, "SELECT * FROM cand", StubModel(), rule, 3, d, min_free_gb=0, log=lambda *a: None)
+            self.assertEqual(r2["chunks_skipped_resume"], 2)
+            self.assertFalse(list(Path(d).glob("*.tmp")))
+            got2 = set(self.con.execute(f"SELECT s1, t FROM read_parquet('{d}/pred-*.parquet')").fetchall())
+            self.assertEqual(got2, ref)
+            with self.assertRaises(M.SubmissionError):                    # different rule -> refuse to mix parts
+                M.infer_chunked_resumable(self.con, "SELECT * FROM cand", StubModel(), M.DecisionRule(threshold=0.5), 3, d,
+                                          min_free_gb=0, log=lambda *a: None)
+
+
+class NullSensitiveModel:
+    """p depends on whether a NULLABLE feature is missing: catches NULL -> 0 conversion bugs."""
+    def predict_proba(self, X):
+        hn = X[:, M.FEATURE_COLUMNS.index("f_hn_eq")]
+        p = np.where(np.isnan(hn), 0.95, np.where(hn == 0, 0.05, 0.9))
+        return np.column_stack([1 - p, p])
+
+
+class TestResumableNullHandling(Base):
+    def test_nulls_stay_nan_and_match_streaming_path(self):
+        self.assertTrue(self.con.execute("""SELECT COUNT(*) FROM cand c JOIN feat_s1 a ON a.id = c.s1 JOIN feat_t b ON b.id = c.t
+                                            WHERE a.hn = '' OR b.hn = ''""").fetchone()[0] > 0)   # data has NULL f_hn_eq
+        rule = M.DecisionRule(threshold=0.5)
+        M.infer_chunked(self.con, "SELECT * FROM cand", NullSensitiveModel(), rule, n_chunks=2, pred_table="pn", min_free_gb=0, log=lambda *a: None)
+        ref = set(self.con.execute("SELECT s1, t FROM pn").fetchall())
+        with tempfile.TemporaryDirectory() as d:
+            M.infer_chunked_resumable(self.con, "SELECT * FROM cand", NullSensitiveModel(), rule, 2, d, min_free_gb=0, log=lambda *a: None)
+            got = set(self.con.execute(f"SELECT s1, t FROM read_parquet('{d}/pred-*.parquet')").fetchall())
+        self.assertEqual(got, ref)

@@ -1,0 +1,9 @@
+# Pinned to the environment used for the submission (Python 3.13.9, macOS arm64).
+duckdb==1.5.5
+numpy==2.5.3
+pandas==3.0.6
+scikit-learn==1.9.1
+scipy==1.18.1
+joblib==1.6.0
+threadpoolctl==3.7.0
+psutil==7.2.2

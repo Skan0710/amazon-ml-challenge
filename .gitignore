@@ -72,3 +72,6 @@ output/pilots/
 
 # Phase 5 generated submission package (large TSVs; rebuilt by scripts/build_submission_package.py)
 submission/
+
+# local run metrics (contain absolute local paths; numbers are reported in experiments/)
+output/phase4_metrics.json

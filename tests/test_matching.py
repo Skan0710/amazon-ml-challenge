@@ -318,7 +318,7 @@ class TestEndToEndInference(unittest.TestCase):
             ds = make_dataset(Path(d) / "ds", prefix="test") if (Path(d) / "ds").mkdir() is None else None
             os.remove(ds / "test_ground_truth.tsv")          # unlabelled, like the real test set
             res = R4.run_inference(ds, "test", Path(d) / "work", StubModel(), M.DecisionRule(threshold=0.9),
-                                   Path(d) / "out", cand_chunks=2, infer_chunks=2, workers=1, min_free_gb=0, log=lambda *a: None)
+                                   Path(d) / "out", cand_chunks=2, infer_chunks=2, workers=1, min_free_gb=0, min_free_write_gb=0, log=lambda *a: None)
             pub = res["publication"]["validators"]
             self.assertTrue(pub[0]["ok"], pub[0])                   # custom streaming validator
             if OFFICIAL.exists():

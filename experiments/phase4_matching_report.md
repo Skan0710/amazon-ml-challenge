@@ -219,7 +219,7 @@ A written row count different from the S1 count is also an error.
 | disk: text tables (one-off, all 12.5M train records) | 283 MB | shared |
 | disk: outputs | 2.7 MB | 27.4 MB |
 
-### Full-scale estimate for the test set (NOT RUN)
+### Full-scale estimate for the test set (made before the run — see §10 for the measured result)
 
 This extrapolates linearly from the 100k run: 1,732,544 test S1 records, at about 101 candidates per S1, gives **about 175M pairs**.
 
@@ -246,3 +246,39 @@ The French share of the test set is unknown, and no French labels exist.
 * **Target exclusivity isn't applied.** Each target belongs to at most one S1 in the training ground truth, and enforcing that could remove decoy false positives. It needs a global pass over all scored pairs, so it can only be evaluated in the full run.
 * **The threshold was chosen on a 20k-S1 validation split.** The plateau between 0.75 and 0.85 is flat to within 0.001, so the risk of overfitting it is low.
 * **Features:** the top feature is address-number agreement. Legal-form agreement and alias features on the target's raw name could still help the Indic/Latin subset.
+
+## 10. Final test-set inference (measured)
+
+The official test set was processed end to end: 1,732,544 S1 records, with 4,887,273 S2 and 5,082,316 S3 targets. The run used the model and rule above, unchanged; test data was used only for inference.
+
+| | value |
+|---|---:|
+| candidate pairs (unique; 220 S1 chunks) | 171,756,016 (99.1 per S1) |
+| S1 records without any candidate | 9,037 |
+| predicted matched pairs (440 scoring chunks, threshold 0.80) | 5,403,410 |
+| S1 with an empty match list / non-empty | 117,592 (6.8%) / 1,614,952 |
+| per country: S1 / mean matches / empty | France 259,452 / 2.67 / 27,280 · India 809,986 / 3.13 / 52,430 · US 663,106 / 3.29 / 37,882 |
+| longest match list | 28 (264 S1 records have more than 11 matches) |
+| lowest predicted probability among matches | 0.8000001 (no forced matches) |
+| compute | candidates 2 h 13 min · scoring ≈ 3.5 h · writing 2.7 min · validation 6.6 min |
+| peak RAM (process tree) / peak working disk | 2.16 GB / 5.0 GB |
+| `candidate_pairs.tsv` / `matching_results.tsv` | 2,233,815,424 B / 92,092,814 B |
+
+**Issues found and fixed during the full run.** Each stopped safely, with nothing written to `output/`.
+
+* **Global duplicate check exhausted memory.** A single `COUNT(DISTINCT (s1, t))` over all 171M candidates exceeded DuckDB's memory plus its 2 GB spill cap. It was replaced by an exact per-part check (`verify_candidate_parts`). The completed candidate parts were verified and reused (`--resume-candidates`).
+* **Non-spillable memory at 4 threads.** About 780k-pair scoring chunks exhausted non-spillable memory with 4 DuckDB threads. Scoring now runs with 2 threads and 440 chunks of about 390k pairs.
+* **Scoring made resumable, and a NULL bug caught.** Scoring was made resumable (`--resumable-inference`, one Parquet part per chunk). Its first version turned SQL NULL features into 0.0, because DuckDB's `fetchnumpy()` returns masked arrays. This was caught on the first chunk (11,597 vs 12,614 matches), fixed to use `.df()`, and confirmed identical pair for pair against the original path on real data (12,614 = 12,614). A NULL-sensitive regression test was added.
+* **Disk guard split.** The free-disk guard was split into a per-chunk guard (`--min-free-gb 3.0`; spill is capped) and a stricter guard before the output write (`--min-free-write-gb 4.0`).
+* **Forced-match gate chunked.** The gate now anti-joins per S1 chunk, instead of against all 171M pairs at once.
+
+**Validation of the real outputs**
+
+* **Pipeline:** the custom streaming validator and the unmodified official validator (sharded over both files, 38 shards) both passed before the atomic rename.
+* **Independent audit** (`scripts/audit_submission.py`), after publication:
+  * every test S1 appears exactly once in both files;
+  * 0 duplicate IDs within lists, 0 malformed lists, 0 duplicate candidate pairs;
+  * every match is a candidate of its S1 and exists in the test S2/S3 files;
+  * no truncation;
+  * test-file SHA-256 hashes unchanged.
+* **Official validator, full file:** `python3 utils/validate_submission.py --matching <out>/matching_results.tsv --test-dir dataset/test --check-ids`, run from `student_resource`, reported PASS. All 5.4M matched IDs exist among the 9,969,589 test S2/S3 IDs.
