@@ -1,8 +1,8 @@
 # ML Challenge 2026: Business Entity Resolution Solution Template
 
-**Team Name:** {{TEAM_NAME}}
-**Team Members:** {{TEAM_MEMBERS}}
-**Submission Date:** {{SUBMISSION_DATE}}
+**Team Name:** Nth Times the Charm
+**Team Members:** Dhruva Gupta (Team Leader), Agneesh Mondal, Anirudh Shenoy, Omkar Dabholkar
+**Submission Date:** 2026-09-27
 
 ---
 
