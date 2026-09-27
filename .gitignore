@@ -58,3 +58,17 @@ logs/
 # Experiment artifacts
 experiments/**/*.pkl
 experiments/**/*.joblib
+
+# Phase 3 derived artefacts (feature Parquet parts, blocking statistics, candidates)
+*.parquet
+data/processed/phase3/
+
+# Phase 4 intermediates (never commit): working DBs, features, pilot/dry-run artefacts, temp outputs
+data/processed/
+output/pilots/
+*.tsv.tmp
+**/duckdb_tmp/
+**/validator_shards/
+
+# Phase 5 generated submission package (large TSVs; rebuilt by scripts/build_submission_package.py)
+submission/
