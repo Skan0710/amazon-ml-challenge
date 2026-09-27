@@ -37,10 +37,11 @@ __all__ = [
     "materialize_text_features", "register_text", "candidate_dedup_report",
     "FEATURE_COLUMNS", "feature_sql", "compute_features", "compute_features_chunked",
     "assign_split", "sample_training_rows", "train_model", "score_pairs", "infer_chunked", "ModelConfig",
+    "infer_chunked_resumable",
     "DecisionRule", "apply_decision", "evaluate_predictions", "entity_f05",
     "search_decision_rules", "singleton_report",
     "write_candidate_pairs_tsv", "write_matching_results_tsv", "SubmissionError",
-    "verify_no_forced_matches", "finalize_outputs",
+    "verify_no_forced_matches", "finalize_outputs", "verify_candidate_parts",
 ]
 
 
@@ -146,7 +147,14 @@ def feature_sql(pairs_sql: str, with_label: bool) -> str:
     label = ", (g.s1 IS NOT NULL)::TINYINT AS label" if with_label else ""
     gt_join = "LEFT JOIN gt_pairs g ON g.s1 = p.s1 AND g.t = p.t" if with_label else ""
     return f"""
-WITH p AS ({pairs_sql}),
+WITH p AS MATERIALIZED ({pairs_sql}),
+-- restrict every side table to the ids of this chunk first: keeps the small pair set as the
+-- hash-join build side regardless of cardinality estimates (a 98k-pair chunk otherwise made
+-- DuckDB build on the 10M-row target table and exhaust memory + spill). Values are unchanged.
+fa AS (SELECT * FROM feat_s1 WHERE id IN (SELECT s1 FROM p)),
+fb AS (SELECT * FROM feat_t WHERE id IN (SELECT t FROM p)),
+xa AS (SELECT id, name_lc, name_indic, addr_missing FROM text_s1 WHERE id IN (SELECT s1 FROM p)),
+xb AS (SELECT id, name_lc, name_indic, addr_missing FROM text_t WHERE id IN (SELECT t FROM p)),
 j AS (
   SELECT p.s1, p.t, p.mask{label},
          a.country, a.name_key a_key, b.name_key b_key, a.name_keys a_keys, b.name_keys b_keys,
@@ -160,8 +168,8 @@ j AS (
          ta.name_lc a_lc, tb.name_lc b_lc, ta.name_indic a_indic, tb.name_indic b_indic,
          ta.addr_missing a_miss, tb.addr_missing b_miss, CAST(p.t // {ID_BASE} AS TINYINT) AS src
   FROM p
-  JOIN feat_s1 a ON a.id = p.s1 JOIN feat_t b ON b.id = p.t
-  JOIN text_s1 ta ON ta.id = p.s1 JOIN text_t tb ON tb.id = p.t
+  JOIN fa a ON a.id = p.s1 JOIN fb b ON b.id = p.t
+  JOIN xa ta ON ta.id = p.s1 JOIN xb tb ON tb.id = p.t
   {gt_join}),
 f AS (
   SELECT j.s1, j.t{', j.label' if with_label else ''},
@@ -220,11 +228,13 @@ def _select_cols(with_label: bool) -> str:
     return "s1, t, " + ("label, " if with_label else "") + feats
 
 
-def compute_features(con, pairs_sql: str, with_label: bool, out_table: str = "pair_features") -> int:
-    """Materialise features for the pairs of ``pairs_sql`` into DuckDB table ``out_table``."""
+def compute_features(con, pairs_sql: str, with_label: bool, out_table: str = "pair_features", temp: bool = False) -> int:
+    """Materialise features for the pairs of ``pairs_sql`` into DuckDB table ``out_table``
+    (``temp=True``: a connection-local TEMP table that never grows the database file)."""
     install_macros(con)
     cols = _select_cols(with_label)
-    con.execute(f"CREATE OR REPLACE TABLE {out_table} AS SELECT {cols} FROM ({feature_sql(pairs_sql, with_label)})")
+    kind = "TEMP TABLE" if temp else "TABLE"
+    con.execute(f"CREATE OR REPLACE {kind} {out_table} AS SELECT {cols} FROM ({feature_sql(pairs_sql, with_label)})")
     return con.execute(f"SELECT COUNT(*) FROM {out_table}").fetchone()[0]
 
 
@@ -283,6 +293,64 @@ def infer_chunked(con, cand_sql: str, model, rule: "DecisionRule", n_chunks: int
         n_pred += k
         log(f"  inference chunk {i + 1}/{n_chunks}: {n:,} pairs -> {k:,} matches in {time.time() - t:.1f}s")
     return {"pairs": n_pairs, "predicted": n_pred, "seconds": round(time.time() - t0, 1)}
+
+
+def infer_chunked_resumable(con, cand_sql: str, model, rule: "DecisionRule", n_chunks: int, parts_dir: str | Path,
+                            batch_rows: int = 250_000, min_free_gb: float = 3.0, log=print) -> dict:
+    """Resumable streaming inference: identical per-chunk logic to :func:`infer_chunked`, but each
+    chunk's predictions are written to ``parts_dir/pred-XXXXX.parquet`` (via ``.tmp`` + rename) and
+    chunks whose part already exists are skipped, so a crash loses at most one chunk.
+    Chunk working data lives in TEMP tables / numpy (the database file does not grow).
+    ``parts_dir/_meta.json`` pins n_chunks and the rule: a resume with different settings is refused."""
+    import json as _json
+    parts_dir = Path(parts_dir)
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    meta = {"n_chunks": int(n_chunks), "rule": asdict(rule), "n_features": len(FEATURE_COLUMNS),
+            "model": type(model).__name__, "n_iter": int(getattr(model, "n_iter_", -1))}
+    meta_path = parts_dir / "_meta.json"
+    if meta_path.exists():
+        old = _json.loads(meta_path.read_text())
+        if old != meta:
+            raise SubmissionError(f"existing prediction parts were made with different settings: {old} != {meta}")
+    else:
+        meta_path.write_text(_json.dumps(meta))
+    for tmp in parts_dir.glob("*.tmp"):
+        tmp.unlink()                                   # half-written part of an interrupted chunk
+    t0, n_pairs, n_pred, skipped = time.time(), 0, 0, 0
+    feats = list(FEATURE_COLUMNS)
+    for i in range(int(n_chunks)):
+        part = parts_dir / f"pred-{i:05d}.parquet"
+        if part.exists():
+            skipped += 1
+            continue
+        check_disk(parts_dir, min_free_gb)
+        t = time.time()
+        pairs = f"SELECT s1, t, mask FROM ({cand_sql}) WHERE hash(s1, 3) % {int(n_chunks)} = {i}"
+        n = compute_features(con, pairs, with_label=False, out_table="_cf", temp=True)
+        # .df() maps SQL NULL -> NaN ("not comparable"), exactly like score_pairs. NOT fetchnumpy(): it returns
+        # masked arrays whose NULLs become 0.0 under np.asarray, silently changing predictions.
+        df = con.execute(f"SELECT s1, t, {', '.join(feats)} FROM _cf").df()
+        con.execute("DROP TABLE IF EXISTS _cf")
+        X = df[feats].to_numpy(dtype=np.float32)
+        p = np.concatenate([model.predict_proba(X[j:j + batch_rows])[:, 1] for j in range(0, len(X), batch_rows)]) if n else np.zeros(0)
+        scores = pd.DataFrame({"s1": df["s1"].to_numpy(dtype=np.int64), "t": df["t"].to_numpy(dtype=np.int64), "p": p})
+        del df, X
+        con.register("_chunk_scores_df", scores)
+        con.execute("CREATE OR REPLACE TEMP TABLE _cs AS SELECT * FROM _chunk_scores_df")
+        con.unregister("_chunk_scores_df")
+        apply_decision(con, rule, scores_table="_cs", out_table="_cp")
+        k = con.execute("SELECT COUNT(*) FROM _cp").fetchone()[0]
+        tmp = part.with_name(part.name + ".tmp")
+        con.execute(f"COPY _cp TO '{tmp}' (FORMAT parquet)")
+        os.replace(tmp, part)
+        for tname in ("_cs", "_cp"):
+            con.execute(f"DROP TABLE IF EXISTS {tname}")
+        n_pairs += n
+        n_pred += k
+        log(f"  inference chunk {i + 1}/{n_chunks}: {n:,} pairs -> {k:,} matches in {time.time() - t:.1f}s")
+    total = con.execute(f"SELECT COUNT(*) FROM read_parquet('{parts_dir}/pred-*.parquet')").fetchone()[0]
+    return {"pairs_this_run": n_pairs, "predicted_this_run": n_pred, "chunks_skipped_resume": skipped,
+            "predicted": int(total), "seconds": round(time.time() - t0, 1)}
 
 
 # =============================================================================
@@ -537,14 +605,44 @@ def write_matching_results_tsv(con, universe_sql: str, pred_sql: str, path: str 
     return _write_id_list_tsv(con, universe_sql, pred_sql, path, ("source1_entity_id", "matched_entity_ids"), batch_s1)
 
 
-def verify_no_forced_matches(con, pred_table: str, cand_sql: str, rule: "DecisionRule") -> dict:
+def verify_no_forced_matches(con, pred_table: str, cand_sql: str, rule: "DecisionRule", n_chunks: int = 1) -> dict:
     """Hard gate: every predicted pair is a candidate and meets the decision rule's threshold
-    (nothing was added to avoid an empty list)."""
+    (nothing was added to avoid an empty list). The candidate-membership check runs per S1 hash
+    chunk so no hash table over all candidate pairs is ever built (a single anti-join against
+    ~171M pairs exceeds memory + spill)."""
     below = con.execute(f"SELECT COUNT(*) FROM {pred_table} WHERE p < {float(rule.threshold)}").fetchone()[0]
-    not_cand = con.execute(f"SELECT COUNT(*) FROM {pred_table} pr ANTI JOIN ({cand_sql}) c ON c.s1 = pr.s1 AND c.t = pr.t").fetchone()[0]
+    not_cand = 0
+    for i in range(int(n_chunks)):
+        flt = f"hash(s1, 3) % {int(n_chunks)} = {i}"
+        not_cand += con.execute(f"""SELECT COUNT(*) FROM (SELECT s1, t FROM {pred_table} WHERE {flt}) pr
+            ANTI JOIN (SELECT s1, t FROM ({cand_sql}) WHERE {flt}) c ON c.s1 = pr.s1 AND c.t = pr.t""").fetchone()[0]
     if below or not_cand:
         raise SubmissionError(f"forced/invalid matches: below_threshold={below}, not_a_candidate={not_cand}")
     return {"predicted_below_threshold": 0, "predicted_not_candidate": 0}
+
+
+def verify_candidate_parts(con, parts_dir: str | Path, expected_parts: Optional[int] = None) -> dict:
+    """Check the Parquet candidate parts written by chunked generation **part by part**.
+
+    Each part holds the candidates of a disjoint set of S1 entities, so a duplicate (s1, t) can only
+    occur inside one part: checking each part separately is exact and needs memory for one part
+    only (a single COUNT(DISTINCT) over all ~171M pairs exhausted memory + spill). Also verifies that
+    no S1 appears in two parts (sum of per-part distinct S1 == global distinct S1) and, optionally,
+    the number of parts. Raises :class:`SubmissionError` on any violation."""
+    parts = sorted(Path(parts_dir).glob("part-*.parquet"))
+    if expected_parts is not None and len(parts) != int(expected_parts):
+        raise SubmissionError(f"expected {expected_parts} candidate parts, found {len(parts)}")
+    rows = s1_sum = 0
+    for p in parts:
+        n, nd, ns1 = con.execute(f"SELECT COUNT(*), COUNT(DISTINCT (s1, t)), COUNT(DISTINCT s1) FROM read_parquet('{p}')").fetchone()
+        if n != nd:
+            raise SubmissionError(f"{p.name}: {n - nd} duplicate candidate pairs")
+        rows += n
+        s1_sum += ns1
+    s1_global = con.execute(f"SELECT COUNT(DISTINCT s1) FROM read_parquet('{Path(parts_dir)}/part-*.parquet')").fetchone()[0]
+    if s1_global != s1_sum:
+        raise SubmissionError(f"{s1_sum - s1_global} S1 entities appear in more than one candidate part")
+    return {"parts": len(parts), "unique_pairs": int(rows), "s1_with_candidates": int(s1_global), "duplicate_pairs": 0}
 
 
 def finalize_outputs(tmp_to_final: dict, validators: Sequence) -> dict:
